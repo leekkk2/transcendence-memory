@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "transcendence-memory"
+version = "0.1.0"
+description = "Bootstrap and configuration tooling for the Transcendence Memory OpenClaw skill and backend."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "platformdirs>=4.3.6",
+  "pydantic>=2.10.0",
+  "tomli-w>=1.2.0",
+  "typer>=0.16.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+]
+
+[project.scripts]
+transcendence-memory = "transcendence_memory.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/transcendence_memory"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
