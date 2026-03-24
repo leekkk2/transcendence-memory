@@ -1,0 +1,9 @@
+{
+  "endpoint": "https://your-rag-endpoint.example.com",
+  "auth": {
+    "type": "header",
+    "name": "X-API-KEY",
+    "value": "<RAG_API_KEY>"
+  },
+  "defaultContainer": "imac"
+}
