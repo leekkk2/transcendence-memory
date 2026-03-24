@@ -21,6 +21,7 @@ from .deploy.health import (
 )
 from .handoff.export import build_connection_bundle, dump_bundle
 from .handoff.importer import import_connection_bundle, load_bundle_from_input, missing_local_inputs
+from .handoff.smoke import run_smoke_checks
 from .bootstrap.detect import detect_environment
 from .bootstrap.doctor import render_findings, run_doctor
 from .bootstrap.models import BootstrapMode, BootstrapSecrets, BootstrapSelection, ProviderSettings, Role, Topology, TransportHint
@@ -430,6 +431,21 @@ def frontend_check(
         if error:
             typer.echo(f"probe error: {error}")
         raise typer.Exit(code=1)
+
+
+@frontend_app.command("smoke")
+def frontend_smoke(
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Run health, embed, and search smoke checks against the imported connection."""
+    runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    try:
+        result = run_smoke_checks(runtime)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    typer.echo(json.dumps(result, indent=2))
 
 
 @app.command("doctor")
