@@ -41,7 +41,7 @@ completed: 2026-03-24
 ## Accomplishments
 - Added compatibility manifest data.
 - Added bilingual compatibility documentation.
-- Added tests that bind manifest values to current code and published skill version.
+- Added tests that bind manifest values to current code and current skill package version.
 
 ## Task Commits
 
