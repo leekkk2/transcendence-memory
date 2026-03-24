@@ -5,19 +5,30 @@ from pathlib import Path
 
 import typer
 
+from .backend.auth.api_keys import auth_status_from_runtime
+from .backend.settings import load_runtime_config
 from .bootstrap.detect import detect_environment
 from .bootstrap.doctor import render_findings, run_doctor
 from .bootstrap.models import BootstrapMode, BootstrapSecrets, BootstrapSelection, ProviderSettings, Role, Topology, TransportHint
 from .bootstrap.paths import resolve_paths
-from .bootstrap.persistence import build_bootstrap_config, read_config, write_config, write_secrets, write_state
+from .bootstrap.persistence import (
+    build_bootstrap_config,
+    read_config,
+    read_secrets,
+    write_config,
+    write_secrets,
+    write_state,
+)
 from .bootstrap.planner import build_bootstrap_plan, render_plan
 
 app = typer.Typer(help="Bootstrap and configuration CLI for Transcendence Memory.")
 init_app = typer.Typer(help="Initialize bootstrap state for backend, frontend, or both roles.")
 config_app = typer.Typer(help="Inspect non-secret bootstrap configuration.")
+auth_app = typer.Typer(help="Inspect and manage authentication state.")
 
 app.add_typer(init_app, name="init")
 app.add_typer(config_app, name="config")
+app.add_typer(auth_app, name="auth")
 
 
 def _resolve_topology(
@@ -185,6 +196,31 @@ def config_show(
         typer.echo("No bootstrap configuration found.")
         raise typer.Exit(code=1)
     typer.echo(json.dumps(config.model_dump(mode="json"), indent=2))
+
+
+@auth_app.command("set-api-key")
+def auth_set_api_key(
+    api_key: str = typer.Option(..., "--api-key"),
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Configure the local API key used for backend and frontend workflows."""
+    paths = resolve_paths(config_path=config_path, secret_path=secret_path)
+    secrets = read_secrets(paths) or BootstrapSecrets()
+    secrets.api_key = api_key
+    write_secrets(secrets, paths)
+    typer.echo("API key stored in secret storage.")
+
+
+@auth_app.command("status")
+def auth_status(
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Show redacted local auth status."""
+    runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    status = auth_status_from_runtime(runtime)
+    typer.echo(json.dumps(status.model_dump(mode="json"), indent=2))
 
 
 @app.command("doctor")
