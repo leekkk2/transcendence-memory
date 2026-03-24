@@ -2,34 +2,61 @@
 
 ## 中文优先
 
-### Docker-first
-
-推荐命令：
+### Canonical commands
 
 ```bash
 transcendence-memory backend deploy
 transcendence-memory backend health
 ```
 
-如果部署失败，优先查看：
+### Docker-first
+
+默认推荐 Docker：
 
 ```bash
 docker compose ps
 docker compose logs backend --tail=100
 ```
 
+适合：
+- Linux
+- macOS
+- Windows（Docker Desktop）
+
 ### Linux systemd
 
-Linux 可以走原生 `systemd` 路径，参考：
+Linux 可使用：
 - `deploy/systemd/transcendence-memory-backend.service`
 - `deploy/systemd/transcendence-memory-backend.env.example`
 - `deploy/systemd/README.md`
 
-### 人工验证
+常用检查：
 
-Phase 3 的真实验证仍需人工完成，见：
-- `.planning/phases/03-cross-platform-deployment-and-health/03-VERIFICATION.md`
+```bash
+systemctl status transcendence-memory-backend
+journalctl -u transcendence-memory-backend -n 100 --no-pager
+```
+
+### Backend acceptance
+
+至少确认：
+
+```bash
+curl -i http://127.0.0.1:8711/health
+```
+
+以及通过客户端或 curl 验证：
+- `/search`
+- `/embed`
+
+### Failure order
+
+优先排查：
+1. 服务是否真的启动
+2. 环境变量 / provider / database 是否可用
+3. reverse proxy 或 advertised endpoint 是否正确
+4. 日志里是否有 search/embed 运行时错误
 
 ## English
 
-Use `backend deploy` and `backend health` as the canonical operator commands. Docker-first is the primary path; Linux `systemd` is the native alternative.
+Use `backend deploy` and `backend health` as the canonical operator commands. Docker-first is the default path; Linux `systemd` is the supported native alternative.
