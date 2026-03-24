@@ -2,6 +2,18 @@
 
 ## 中文优先
 
+### 身份优先 / Identity first
+
+本页主要面向 **frontend 身份** 或 **both 身份中的 frontend 阶段**。
+
+- 如果当前机器是 `backend`，不要优先把自己当作 frontend 客户端
+- 先检查本地 `operator-identity.md`
+- 若身份文档缺失，先补录身份，再继续导入连接
+
+对 `both` 身份：
+- 先确认 backend 已健康
+- 再执行 frontend import / check / smoke
+
 ### 后端机器导出
 
 ```bash
