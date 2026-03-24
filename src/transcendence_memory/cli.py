@@ -20,6 +20,7 @@ from .deploy.health import (
     probe_backend_service,
 )
 from .handoff.export import build_connection_bundle, dump_bundle
+from .handoff.importer import import_connection_bundle, load_bundle_from_input, missing_local_inputs
 from .bootstrap.detect import detect_environment
 from .bootstrap.doctor import render_findings, run_doctor
 from .bootstrap.models import BootstrapMode, BootstrapSecrets, BootstrapSelection, ProviderSettings, Role, Topology, TransportHint
@@ -40,11 +41,13 @@ init_app = typer.Typer(help="Initialize bootstrap state for backend, frontend, o
 config_app = typer.Typer(help="Inspect non-secret bootstrap configuration.")
 auth_app = typer.Typer(help="Inspect and manage authentication state.")
 backend_app = typer.Typer(help="Deploy and operate the backend runtime.")
+frontend_app = typer.Typer(help="Import and validate frontend connection state.")
 
 app.add_typer(init_app, name="init")
 app.add_typer(config_app, name="config")
 app.add_typer(auth_app, name="auth")
 app.add_typer(backend_app, name="backend")
+app.add_typer(frontend_app, name="frontend")
 
 
 def _resolve_topology(
@@ -385,6 +388,48 @@ def backend_export_connection(
         typer.echo(f"Bundle written: {output}")
     else:
         typer.echo(rendered)
+
+
+@frontend_app.command("import-connection")
+def frontend_import_connection(
+    bundle_file: Path | None = typer.Option(None, "--bundle-file"),
+    bundle_json: str | None = typer.Option(None, "--bundle-json"),
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Import a redacted connection bundle into non-secret frontend config."""
+    paths = resolve_paths(config_path=config_path, secret_path=secret_path)
+    try:
+        bundle = load_bundle_from_input(bundle_file=bundle_file, bundle_json=bundle_json)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    config = import_connection_bundle(paths, bundle)
+    typer.echo(json.dumps(config.model_dump(mode="json"), indent=2))
+
+
+@frontend_app.command("check")
+def frontend_check(
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Validate imported backend metadata, local auth state, and backend reachability."""
+    runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    missing = missing_local_inputs(runtime)
+    reachable, payload, error = probe_backend_service(runtime)
+    result = {
+        "missing_local_inputs": missing,
+        "service_reachable": reachable,
+        "remote": payload,
+    }
+    typer.echo(json.dumps(result, indent=2))
+    if missing:
+        typer.echo("Resolve local auth material before using this imported connection.")
+        raise typer.Exit(code=1)
+    if not reachable:
+        if error:
+            typer.echo(f"probe error: {error}")
+        raise typer.Exit(code=1)
 
 
 @app.command("doctor")
