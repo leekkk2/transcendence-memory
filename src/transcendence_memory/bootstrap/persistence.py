@@ -57,7 +57,8 @@ def build_bootstrap_config(
         auth_mode="api_key",
         provider=selection.provider.provider,
         model=selection.provider.model,
-        base_url=selection.provider.base_url or f"http://{detection.local_ip}:8000",
+        base_url=selection.provider.base_url,
+        advertised_url=f"http://{detection.local_ip}:8000",
         config_path=str(paths.config_root),
         secret_path=str(paths.secret_root),
         deferred_items=deferred_items,
@@ -176,3 +177,57 @@ def update_bootstrap_auth_config(
     )
     write_config(updated, paths)
     return updated
+
+
+def update_connection_bundle_config(
+    paths: ResolvedPaths,
+    *,
+    topology,
+    auth_mode: str,
+    provider: str,
+    model: str,
+    provider_base_url: str | None,
+    advertised_url: str,
+    health_path: str,
+    embed_path: str,
+    search_path: str,
+    bundle_version: str,
+    required_local_inputs: list[str],
+) -> BootstrapConfig:
+    config = read_config(paths)
+    if config is None:
+        config = BootstrapConfig(
+            role="frontend",
+            topology=topology,
+            transport_hint="domain_proxy" if "://" in advertised_url and "." in advertised_url else "ip_port",
+            auth_mode=auth_mode,
+            provider=provider,
+            model=model,
+            base_url=provider_base_url,
+            advertised_url=advertised_url,
+            health_path=health_path,
+            embed_path=embed_path,
+            search_path=search_path,
+            connection_bundle_version=bundle_version,
+            required_local_inputs=required_local_inputs,
+            config_path=str(paths.config_root),
+            secret_path=str(paths.secret_root),
+        )
+    else:
+        config = config.model_copy(
+            update={
+                "topology": topology,
+                "auth_mode": auth_mode,
+                "provider": provider,
+                "model": model,
+                "base_url": provider_base_url,
+                "advertised_url": advertised_url,
+                "health_path": health_path,
+                "embed_path": embed_path,
+                "search_path": search_path,
+                "connection_bundle_version": bundle_version,
+                "required_local_inputs": required_local_inputs,
+            }
+        )
+    write_config(config, paths)
+    return config
