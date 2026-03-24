@@ -1,0 +1,14 @@
+[Unit]
+Description=Transcendence Memory Backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/transcendence-memory
+EnvironmentFile=/etc/transcendence-memory/transcendence-memory-backend.env
+ExecStart=python -m transcendence_memory.backend.main
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
