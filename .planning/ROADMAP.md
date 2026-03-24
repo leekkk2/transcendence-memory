@@ -40,6 +40,16 @@ This roadmap turns Transcendence Memory into a thin OpenClaw skill backed by a t
   4. User never sees refresh tokens or equivalent secrets in logs, redacted summaries, or exported artifacts produced by auth-enabled workflows.
 **Plans**: TBD
 
+### Phase 02.1: Migrate rag-everything-enhancer contracts, docs, config examples, and compatibility expectations into transcendence-memory before further release work (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 2
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 02.1 to break down)
+
 ### Phase 3: Cross-Platform Deployment and Health
 **Goal**: Users can deploy the backend service predictably on supported machines and recover quickly when runtime health checks fail.
 **Depends on**: Phase 2
