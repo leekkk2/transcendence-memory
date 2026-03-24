@@ -8,6 +8,27 @@ This skill has **two parts**:
 
 ---
 
+## Identity first / 先确认身份
+
+初始化后，当前机器必须生成本地身份文档：
+
+- `operator-identity.md`
+
+该文档用于明确当前机器是：
+- `frontend`
+- `backend`
+- `both`
+
+如果缺少该文档（第一次使用、未正确初始化、意外退出、或状态损坏）：
+- 先停止假设当前身份
+- 要求用户补录身份
+- 重新执行 `transcendence-memory init <role> --dry-run`
+- 确认后执行 `transcendence-memory init <role> --yes`
+
+身份确认后，阅读文档和执行命令的优先级必须跟随身份切换。
+
+---
+
 ## Part A — Frontend setup (client hosts)
 
 ### 1) Prepare config
