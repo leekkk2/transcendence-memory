@@ -7,7 +7,7 @@
 
 ### Bootstrap & Topology
 
-- [ ] **BOOT-01**: User can invoke the packaged OpenClaw skill to choose deployment role: `backend`, `frontend`, or `both`
+- [x] **BOOT-01**: User can invoke the packaged OpenClaw skill to choose deployment role: `backend`, `frontend`, or `both`
 - [ ] **BOOT-02**: User can run guided `init/config` that detects operating system, shell, Docker availability, writable paths, and occupied ports before deployment
 - [ ] **BOOT-03**: User can review a deployment plan before the skill or CLI changes local state
 - [ ] **BOOT-04**: User can rerun bootstrap safely on an already configured machine without corrupting existing configuration
@@ -16,7 +16,7 @@
 ### Configuration & Secrets
 
 - [ ] **CONF-01**: User can set provider, model, and base URL through CLI commands instead of editing source files
-- [ ] **CONF-02**: User can generate configuration scaffolding for the selected role and topology
+- [x] **CONF-02**: User can generate configuration scaffolding for the selected role and topology
 - [ ] **CONF-03**: User can store sensitive configuration separately from non-sensitive configuration
 - [ ] **CONF-04**: User can inspect current non-sensitive configuration without exposing secrets in CLI output
 - [ ] **CONF-05**: User can override default config and secret storage paths when local environment requires different locations
@@ -92,13 +92,13 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BOOT-01 | Phase 1 | Pending |
+| BOOT-01 | Phase 1 | Complete |
 | BOOT-02 | Phase 1 | Pending |
 | BOOT-03 | Phase 1 | Pending |
 | BOOT-04 | Phase 1 | Pending |
 | BOOT-05 | Phase 1 | Pending |
 | CONF-01 | Phase 1 | Pending |
-| CONF-02 | Phase 1 | Pending |
+| CONF-02 | Phase 1 | Complete |
 | CONF-03 | Phase 1 | Pending |
 | CONF-04 | Phase 1 | Pending |
 | CONF-05 | Phase 1 | Pending |
