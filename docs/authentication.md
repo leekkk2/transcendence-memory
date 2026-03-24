@@ -17,15 +17,12 @@ transcendence-memory auth status
 transcendence-memory auth logout
 ```
 
-说明：
-- `auth status` 是 redacted 输出
-- refresh token 不应出现在 CLI 输出、bundle、或普通 config 中
+### Safety rules
 
-### 人工验证
-
-Phase 2 的 live OAuth / provider 验证仍需人工完成，见：
-- `.planning/phases/02-authenticated-backend-core/02-VERIFICATION.md`
+- `auth status` 必须是 redacted 输出
+- refresh token 不应出现在 CLI 输出、bundle、普通 config、summary 中
+- 切换 provider / auth 方案后，应重新做 `frontend check` / `frontend smoke`
 
 ## English
 
-Use API key or OAuth via the `auth` command group. Status output is intentionally redacted.
+Use API key or OAuth through the `auth` command group. Status output must remain redacted and secret-safe.

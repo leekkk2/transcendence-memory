@@ -2,7 +2,7 @@
 
 ## 中文优先
 
-### Bootstrap
+### Bootstrap / local state
 
 ```bash
 transcendence-memory doctor
@@ -13,37 +13,31 @@ transcendence-memory doctor --fix
 
 ```bash
 transcendence-memory backend health
-```
-
-常见下一步：
-
-```bash
 docker compose ps
 docker compose logs backend --tail=100
+```
+
+Linux systemd:
+
+```bash
 systemctl status transcendence-memory-backend
 journalctl -u transcendence-memory-backend -n 100 --no-pager
 ```
 
-### Handoff
-
-如果前端导入后失败：
+### Frontend / handoff
 
 ```bash
 transcendence-memory frontend check
 transcendence-memory frontend smoke
 ```
 
-### 人工验证积压
+### Common next steps
 
-- Phase 2: live PostgreSQL / provider / OAuth
-- Phase 3: real Docker / Linux systemd
-- Phase 4: real cross-machine handoff
-
-分别见：
-- `.planning/phases/02-authenticated-backend-core/02-VERIFICATION.md`
-- `.planning/phases/03-cross-platform-deployment-and-health/03-VERIFICATION.md`
-- `.planning/phases/04-secure-connection-handoff-and-verification/04-VERIFICATION.md`
+- `401/403`：检查 auth header / API key
+- `5xx`：检查 backend 日志和 reverse proxy
+- `search` 有 HTTP 200 但 body 仍报错：视为失败，不算 rollout complete
+- brand-new container 搜不到内容：先确认 `/embed` 是否成功执行
 
 ## English
 
-Use `doctor`, `backend health`, `frontend check`, and `frontend smoke` first. Then follow the phase verification reports for real-environment validation gaps.
+Start with `doctor`, `backend health`, `frontend check`, and `frontend smoke`. Treat transport success and application success as separate checks.
