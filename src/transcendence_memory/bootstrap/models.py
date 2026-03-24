@@ -70,6 +70,12 @@ class BootstrapConfig(BaseModel):
     provider: str
     model: str
     base_url: str | None = None
+    advertised_url: str | None = None
+    health_path: str = "/api/v1/health"
+    embed_path: str = "/api/v1/memory/embed"
+    search_path: str = "/api/v1/memory/search"
+    connection_bundle_version: str | None = None
+    required_local_inputs: list[str] = Field(default_factory=list)
     oauth_issuer: str | None = None
     oauth_authorize_url: str | None = None
     oauth_token_url: str | None = None
