@@ -2,6 +2,18 @@
 
 ## 中文优先
 
+### 身份优先 / Identity first
+
+本页主要面向 **backend 身份** 或 **both 身份中的 backend 阶段**。
+
+- 如果当前机器是 `frontend`，不要优先按本页操作
+- 先检查本地 `operator-identity.md`
+- 若身份文档缺失，先补录身份，再继续部署
+
+对 `both` 身份：
+- 先完成 backend deploy / backend health
+- 再进入 frontend 连接与 smoke
+
 ### Canonical commands
 
 ```bash
