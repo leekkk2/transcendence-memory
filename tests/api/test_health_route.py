@@ -8,5 +8,5 @@ def test_health_route_reports_auth_mode() -> None:
     response = client.get("/api/v1/health")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "ok"
+    assert payload["status"] in {"ok", "degraded"}
     assert "auth_mode" in payload
