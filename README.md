@@ -30,6 +30,31 @@ This is a Chinese-first self-hosted memory operator repository covering the Open
 - API key、token、secret 始终留在本机安全存储
 - builtin memory 保持启用
 
+## 身份优先 / Identity First
+
+开始任何部署、连接、排障或 smoke 之前，先确认当前机器身份：
+
+- `frontend`
+- `backend`
+- `both`
+
+初始化后，本机应存在身份文档：
+
+- `operator-identity.md`
+
+如果没有该文档（第一次使用、未正确初始化、意外退出、或状态损坏）：
+
+1. 不要继续假设当前身份
+2. 先补录身份
+3. 执行 `transcendence-memory init <role> --dry-run`
+4. 确认后执行 `transcendence-memory init <role> --yes`
+
+身份确认后再决定文档优先级：
+
+- `frontend` → 优先看 `docs/frontend-handoff.md`
+- `backend` → 优先看 `docs/backend-deploy.md`
+- `both` → 先 backend，再 frontend，再 smoke
+
 ## 快速路径 / Quickstart
 
 ### same-machine
