@@ -12,6 +12,7 @@ This roadmap turns Transcendence Memory into a thin OpenClaw skill backed by a t
 
 - [ ] **Phase 1: Guided Bootstrap and Safe Configuration** - Users choose machine role and topology, then create secure role-aware local configuration without opaque state changes.
 - [ ] **Phase 2: Authenticated Backend Core** - Users can authenticate and run real memory operations against the independent backend backed by PostgreSQL + pgvector.
+- [ ] **Phase 02.1: Migrate rag-everything-enhancer contracts, docs, config examples, and compatibility expectations into transcendence-memory before further release work (INSERTED)** - Restore the original skill's migration-critical contracts and compatibility expectations before more release-oriented work continues.
 - [ ] **Phase 3: Cross-Platform Deployment and Health** - Users can deploy and operate the backend reliably through the Docker-first path, with Linux `systemd` as a secondary option.
 - [ ] **Phase 4: Secure Connection Handoff and Verification** - Users can move only redacted connection metadata across machines and prove the end-to-end path works.
 - [x] **Phase 5: Bilingual Packaging and Release Hardening** - Users get a coherent OpenClaw-ready OSS release surface with bilingual guidance and compatibility protection. (completed 2026-03-24)
@@ -42,13 +43,15 @@ This roadmap turns Transcendence Memory into a thin OpenClaw skill backed by a t
 
 ### Phase 02.1: Migrate rag-everything-enhancer contracts, docs, config examples, and compatibility expectations into transcendence-memory before further release work (INSERTED)
 
-**Goal:** [Urgent work - to be planned]
-**Requirements**: TBD
+**Goal:** Users can understand and use a sanitized migration-compatible Transcendence Memory surface that preserves the essential contracts, docs, config examples, and compatibility expectations from `rag-everything-enhancer` without carrying over private secrets or internal-only infrastructure assumptions.
+**Requirements**: MIGR-01, MIGR-02, MIGR-03, MIGR-04, MIGR-05, MIGR-06
 **Depends on:** Phase 2
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (run /gsd:plan-phase 02.1 to break down)
+**Success Criteria** (what must be TRUE):
+  1. User can read sanitized setup, architecture, dataflow, operations, and safety docs that preserve the important frontend/backend contract from `rag-everything-enhancer`.
+  2. User can use sanitized config examples for endpoint, auth header shape, default container, and env/load-script expectations without inheriting private keys, endpoints, or internal-only paths.
+  3. User can understand which original `rag-everything-enhancer` API and storage semantics are preserved, which are adapted, and which are intentionally not migrated.
+  4. The published `transcendence-memory` skill package and release docs expose the migration compatibility surface explicitly instead of presenting an unrelated bootstrap-only skill as a drop-in replacement.
+**Plans:** TBD
 
 ### Phase 3: Cross-Platform Deployment and Health
 **Goal**: Users can deploy the backend service predictably on supported machines and recover quickly when runtime health checks fail.
@@ -91,6 +94,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Guided Bootstrap and Safe Configuration | 0/TBD | Not started | - |
 | 2. Authenticated Backend Core | 0/TBD | Not started | - |
+| 2.1. Migration Compatibility Recovery | 0/TBD | Not started | - |
 | 3. Cross-Platform Deployment and Health | 0/TBD | Not started | - |
 | 4. Secure Connection Handoff and Verification | 0/TBD | Not started | - |
 | 5. Bilingual Packaging and Release Hardening | 0/TBD | Complete    | 2026-03-24 |
