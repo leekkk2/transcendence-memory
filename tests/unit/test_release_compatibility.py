@@ -19,3 +19,12 @@ def test_release_compatibility_matches_current_versions() -> None:
     assert payload["backend_version"] == __version__
     assert payload["bundle_version"] == BUNDLE_VERSION
     assert payload["skill_version"] == "0.1.0"
+
+
+def test_release_workflows_exist_and_reference_manifest() -> None:
+    ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    release = Path(".github/workflows/release-checks.yml").read_text(encoding="utf-8")
+    assert ".github/workflows/ci.yml"
+    assert ".github/workflows/release-checks.yml"
+    assert "release-compatibility.json" in release
+    assert "pytest" in ci
