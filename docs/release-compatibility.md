@@ -2,8 +2,7 @@
 
 ## 中文优先
 
-当前发布兼容矩阵定义在：
-
+当前兼容矩阵定义在：
 - `compat/release-compatibility.json`
 
 核心字段：
