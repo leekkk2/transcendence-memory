@@ -2,7 +2,7 @@
 
 **Gathered:** 2026-03-24
 **Status:** Ready for planning
-**Source:** Auto-derived from roadmap, current repository state, prior phase verification reports, published skill-hub state, and current official GitHub release hardening guidance
+**Source:** Auto-derived from roadmap, current repository state, prior phase verification reports, current repository skill-package state, and current official GitHub release hardening guidance
 
 <domain>
 ## Phase Boundary
@@ -53,7 +53,7 @@ It does not add new product capabilities. It packages, documents, and protects w
 <specifics>
 ## Specific Ideas
 
-- The skill has already been copied to `skills-hub` and pushed there, so Phase 5 should account for the fact that the skill package now has an external publication surface.
+- The skill package already exists in-repo, so Phase 5 should account for the repository-local canonical skill surface.
 - Root docs are currently minimal, so README and runbooks are the main Phase 5 functional deliverables.
 - Current Phase 2/3/4 verification reports already define the real-environment checks that runbooks should surface rather than hide.
 
@@ -77,7 +77,7 @@ It does not add new product capabilities. It packages, documents, and protects w
 
 ### Current Publication and Package Surfaces
 - `README.md` — Current minimal root landing page that Phase 5 must replace with a full bilingual OSS entry point.
-- `transcendence-memory/SKILL.md` — Current published skill package entry point.
+- `transcendence-memory/SKILL.md` — Current in-repo canonical skill package entry point.
 - `transcendence-memory/references/bootstrap.md` and `transcendence-memory/references/troubleshooting.md` — Existing skill-level docs that Phase 5 should align with, not contradict.
 - `deploy/docker/backend.env.example`, `deploy/systemd/README.md` — Existing deploy assets that Phase 5 runbooks must reference.
 
@@ -93,7 +93,7 @@ It does not add new product capabilities. It packages, documents, and protects w
 ## Existing Code Insights
 
 ### Reusable Assets
-- `transcendence-memory/` skill package already exists and is already published to the `skills-hub` remote
+- `transcendence-memory/` skill package already exists and is the repository-local canonical skill surface
 - `deploy/docker/` and `deploy/systemd/` already provide concrete operator targets
 - verification reports in `.planning/phases/02-*`, `.planning/phases/03-*`, `.planning/phases/04-*` already enumerate the real manual checks docs should reference
 
