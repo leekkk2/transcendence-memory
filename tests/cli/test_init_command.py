@@ -65,3 +65,26 @@ def test_init_both_writes_non_secret_config(bootstrap_roots, runner) -> None:
     config_text = (bootstrap_roots["config_root"] / "config.toml").read_text(encoding="utf-8")
     assert "provider = \"openai\"" in config_text
     assert "base_url = \"http://127.0.0.1:8000\"" in config_text
+
+
+def test_init_frontend_writes_role_identity_document(bootstrap_roots, runner) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "frontend",
+            "--topology",
+            "split_machine",
+            "--config-path",
+            str(bootstrap_roots["config_root"]),
+            "--secret-path",
+            str(bootstrap_roots["secret_root"]),
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0
+    identity_text = (bootstrap_roots["config_root"] / "operator-identity.md").read_text(encoding="utf-8")
+    assert "frontend" in identity_text
+    assert "不负责部署本机后端" in identity_text
+    assert "docs/frontend-handoff.md" in identity_text
+    assert "transcendence-memory/references/identity-frontend.md" in identity_text
