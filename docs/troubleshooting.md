@@ -9,6 +9,17 @@ transcendence-memory doctor
 transcendence-memory doctor --fix
 ```
 
+如果 `doctor` 报告缺少 `operator-identity.md`：
+
+- 不要继续假设当前机器是 frontend / backend / both
+- 先补录身份
+- 然后重新执行：
+
+```bash
+transcendence-memory init <role> --dry-run
+transcendence-memory init <role> --yes
+```
+
 ### Backend health
 
 ```bash
