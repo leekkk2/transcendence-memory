@@ -28,7 +28,7 @@ This roadmap turns Transcendence Memory into a thin OpenClaw skill backed by a t
   2. User can run guided `init/config` that detects operating system, shell, Docker availability, writable paths, and occupied ports, then review a plan before local state changes are applied.
   3. User can generate role-aware configuration scaffolding and set provider, model, and base URL from CLI commands instead of editing repository files.
   4. User can keep secrets separate from non-sensitive configuration, inspect current non-sensitive settings safely, override config or secret storage paths, and rerun bootstrap without corrupting an existing setup.
-**Plans**: TBD
+**Plans**: 5 total (`01-01` complete; `01-02` to `01-05` pending)
 
 ### Phase 2: Authenticated Backend Core
 **Goal**: Users can authenticate through the CLI and use the independent backend for real memory operations with PostgreSQL + pgvector as the authoritative persistence layer.
@@ -88,11 +88,11 @@ This roadmap turns Transcendence Memory into a thin OpenClaw skill backed by a t
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 2.1 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Guided Bootstrap and Safe Configuration | 0/TBD | Not started | - |
+| 1. Guided Bootstrap and Safe Configuration | 1/5 | In progress | - |
 | 2. Authenticated Backend Core | 0/TBD | Not started | - |
 | 2.1. Migration Compatibility Recovery | 0/TBD | Complete    | 2026-03-24 |
 | 3. Cross-Platform Deployment and Health | 0/TBD | Not started | - |
