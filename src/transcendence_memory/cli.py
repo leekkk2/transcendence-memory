@@ -19,6 +19,7 @@ from .deploy.health import (
     health_follow_up_commands,
     probe_backend_service,
 )
+from .handoff.export import build_connection_bundle, dump_bundle
 from .bootstrap.detect import detect_environment
 from .bootstrap.doctor import render_findings, run_doctor
 from .bootstrap.models import BootstrapMode, BootstrapSecrets, BootstrapSelection, ProviderSettings, Role, Topology, TransportHint
@@ -361,6 +362,29 @@ def backend_health(
     if error:
         typer.echo(f"- probe error: {error}")
     raise typer.Exit(code=1)
+
+
+@backend_app.command("export-connection")
+def backend_export_connection(
+    topology: Topology = typer.Option(Topology.SPLIT_MACHINE, "--topology"),
+    output: Path | None = typer.Option(None, "--output"),
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Export a redacted connection bundle for frontend handoff."""
+    runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    try:
+        bundle = build_connection_bundle(runtime, topology)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        typer.echo("Set a public or advertised backend URL before exporting a split-machine bundle.")
+        raise typer.Exit(code=1)
+
+    rendered = dump_bundle(bundle, output=output)
+    if output is not None:
+        typer.echo(f"Bundle written: {output}")
+    else:
+        typer.echo(rendered)
 
 
 @app.command("doctor")
