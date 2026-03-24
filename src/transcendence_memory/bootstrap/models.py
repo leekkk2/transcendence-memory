@@ -9,6 +9,22 @@ from pydantic import BaseModel, Field
 
 SCHEMA_VERSION = 1
 
+__all__ = [
+    "SCHEMA_VERSION",
+    "Role",
+    "Topology",
+    "TransportHint",
+    "BootstrapMode",
+    "ProviderSettings",
+    "BootstrapSelection",
+    "DetectionResult",
+    "BootstrapConfig",
+    "BootstrapSecrets",
+    "BootstrapState",
+    "ResolvedPaths",
+    "BootstrapPlan",
+]
+
 
 class Role(str, Enum):
     BACKEND = "backend"
