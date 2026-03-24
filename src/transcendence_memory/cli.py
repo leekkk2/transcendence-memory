@@ -6,6 +6,8 @@ from pathlib import Path
 import typer
 
 from .backend.auth.api_keys import auth_status_from_runtime
+from .backend.auth.oauth import login_via_browser
+from .backend.auth.tokens import clear_token_state, store_token_state
 from .backend.settings import load_runtime_config
 from .bootstrap.detect import detect_environment
 from .bootstrap.doctor import render_findings, run_doctor
@@ -15,6 +17,7 @@ from .bootstrap.persistence import (
     build_bootstrap_config,
     read_config,
     read_secrets,
+    update_bootstrap_auth_config,
     write_config,
     write_secrets,
     write_state,
@@ -221,6 +224,53 @@ def auth_status(
     runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
     status = auth_status_from_runtime(runtime)
     typer.echo(json.dumps(status.model_dump(mode="json"), indent=2))
+
+
+@auth_app.command("login")
+def auth_login(
+    issuer: str | None = typer.Option(None, "--issuer"),
+    authorize_url: str | None = typer.Option(None, "--authorize-url"),
+    token_url: str | None = typer.Option(None, "--token-url"),
+    client_id: str | None = typer.Option(None, "--client-id"),
+    scope: list[str] | None = typer.Option(None, "--scope"),
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Complete a browser-based OAuth login with PKCE and loopback redirect."""
+    runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    oauth = runtime.settings.oauth.model_copy(
+        update={
+            "issuer": issuer or runtime.settings.oauth.issuer,
+            "authorize_url": authorize_url or runtime.settings.oauth.authorize_url,
+            "token_url": token_url or runtime.settings.oauth.token_url,
+            "client_id": client_id or runtime.settings.oauth.client_id,
+            "scopes": scope or runtime.settings.oauth.scopes,
+        }
+    )
+    token_state = login_via_browser(oauth)
+    store_token_state(runtime.paths, token_state)
+    update_bootstrap_auth_config(
+        runtime.paths,
+        auth_mode="oauth",
+        oauth_issuer=oauth.issuer,
+        oauth_authorize_url=oauth.authorize_url,
+        oauth_token_url=oauth.token_url,
+        oauth_client_id=oauth.client_id,
+        oauth_scopes=oauth.scopes,
+    )
+    typer.echo("OAuth login completed.")
+
+
+@auth_app.command("logout")
+def auth_logout(
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Clear stored OAuth tokens from secret storage."""
+    paths = resolve_paths(config_path=config_path, secret_path=secret_path)
+    clear_token_state(paths)
+    update_bootstrap_auth_config(paths, auth_mode="api_key")
+    typer.echo("Stored OAuth credentials cleared.")
 
 
 @app.command("doctor")
