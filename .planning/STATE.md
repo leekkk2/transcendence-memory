@@ -64,7 +64,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- Complete Phase 2 human verification — `.planning/todos/pending/2026-03-24-complete-phase-2-human-verification.md`
 
 ### Blockers/Concerns
 
