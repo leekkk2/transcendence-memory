@@ -15,7 +15,7 @@ What does the planner need to know to create strong implementation plans for bil
 
 - Root `README.md` is still almost empty.
 - There is no `LICENSE` file yet even though the project-level decision is MIT.
-- The skill package already exists and has been published into the separate `skills-hub` repository.
+- The skill package already exists in-repo and must be treated as the canonical public operator surface.
 - There is no `.github/workflows/` directory yet.
 - Verification reports already exist for Phases 2, 3, and 4 and should be surfaced by the release docs rather than rediscovered manually.
 
@@ -26,7 +26,7 @@ What does the planner need to know to create strong implementation plans for bil
 Phase 5 should not treat docs as “later cleanup”. The root README is currently insufficient to describe:
 - what this project is
 - how to choose same-machine vs split-machine
-- how to use the published skill package
+- how to use the canonical in-repo skill package
 - how to verify deployment/auth/handoff
 
 The planner should therefore include at least one docs-first plan that replaces the root README and adds Chinese-first bilingual runbooks.
@@ -94,7 +94,7 @@ The planner should likely split Phase 5 into:
 ## Sources Used
 
 - Current repository state
-- Published skill-hub state from today
+- Current repository-local skill state
 - Official GitHub documentation on Actions security hardening, dependency review, secret scanning / push protection concepts, and artifact integrity guidance
 
 ---

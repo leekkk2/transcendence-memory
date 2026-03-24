@@ -1,7 +1,7 @@
 # Requirements: Transcendence Memory
 
 **Defined:** 2026-03-23
-**Core Value:** 用户可以通过 OpenClaw skill 以安全、可配置、可验证的方式完成记忆后端的部署与前端接入，而且整个过程不会把敏感信息硬编码进开源仓库。
+**Core Value:** 用户可以通过公开仓库中的 skill、CLI、backend 与 runbook，以安全、可配置、可验证的方式完成记忆后端部署与前端接入，而且整个过程不会把敏感信息硬编码进仓库。
 
 ## v1 Requirements
 
@@ -37,14 +37,12 @@
 - [ ] **BACK-04**: User can verify backend health from CLI and receive actionable failure guidance
 - [ ] **BACK-05**: Backend service can execute authenticated `search` and `embed` operations against the configured provider and persistence layer
 
-### Migration Compatibility
+### Skill & Public Docs Surface
 
-- [ ] **MIGR-01**: User can read a sanitized migration contract that maps `rag-everything-enhancer` frontend/backend responsibilities onto `transcendence-memory`
-- [ ] **MIGR-02**: User can use sanitized config examples for endpoint, auth header, `defaultContainer`, `RAG_CONFIG_FILE`, and load-script environment variables without inheriting private secrets
-- [ ] **MIGR-03**: User can see documented compatibility expectations for original `rag-everything-enhancer` API/storage semantics, including `container` namespace behavior and any retained or dropped compatibility aliases
-- [ ] **MIGR-04**: Published `transcendence-memory` skill docs include migrated setup, architecture, dataflow, operations, and safety guidance rather than only generic bootstrap notes
-- [ ] **MIGR-05**: Release docs and compatibility artifacts explicitly state which `rag-everything-enhancer` behaviors are preserved, adapted, or intentionally not migrated
-- [ ] **MIGR-06**: Public-facing repository artifacts do not expose original private endpoints, API keys, or internal-only paths from `rag-everything-enhancer`
+- [ ] **SKILL-01**: User can use the repository-local OpenClaw skill as the canonical operator entry point for frontend and backend flows
+- [ ] **SKILL-02**: Skill package ships self-contained `setup` / `ARCHITECTURE` / `DATAFLOW` / `OPERATIONS` / `VETTING_REPORT` references in a public-safe form
+- [ ] **SKILL-03**: Public config examples preserve endpoint/auth/defaultContainer/load-script shape without committing private values
+- [ ] **SKILL-04**: Public repository docs guide backend deploy, frontend handoff, authentication, and troubleshooting without relying on internal-only knowledge
 
 ### Connection Handoff
 
@@ -54,13 +52,12 @@
 - [ ] **CONN-04**: Frontend user can connect to the backend and verify reachability plus auth compatibility from CLI
 - [ ] **CONN-05**: Split-machine flow never exports backend-local bind addresses as frontend connection endpoints
 
-### Verification & Documentation
+### Verification & Packaging
 
 - [ ] **VERI-01**: User can run end-to-end smoke tests that cover `health`, `search`, and `embed`
 - [ ] **VERI-02**: CLI failure output tells the user the next exact command or recovery step
 - [ ] **VERI-03**: Project ships a Chinese-first bilingual README that covers same-machine and split-machine usage
-- [ ] **VERI-04**: Project ships bilingual operator runbooks for backend deployment, frontend connection, authentication, and troubleshooting
-- [ ] **VERI-05**: OpenClaw skill package, backend service, CLI, and connection bundle versions are compatibility-checked for release
+- [ ] **VERI-04**: OpenClaw skill package, backend service, CLI, and connection bundle versions are compatibility-checked for release
 
 ## v2 Requirements
 
@@ -80,10 +77,10 @@
 
 | Feature | Reason |
 |---------|--------|
-| Automatic migration/import of old private memory data | v1 is deployment-focused; migration guidance is enough without embedding legacy assumptions into OSS code |
+| Automatic migration/import of old private memory data | v1 is deployment-focused and public-safe |
 | Web admin console | Expands auth and surface area before CLI and runbooks are proven |
-| Automatic cross-machine secret sync | High leak risk across platforms; redacted bundle plus local secret entry is safer |
-| Multi-node / HA / Kubernetes deployment | Would explode the ops matrix before single-node and split-machine paths are stable |
+| Automatic cross-machine secret sync | High leak risk across platforms |
+| Multi-node / HA / Kubernetes deployment | Would explode the ops matrix too early |
 | Auth modes beyond `apiKey + OAuth` | Support matrix would sprawl too early |
 | Unattended firewall, SSH, or network mutation | Too brittle and risky for v1 automation |
 | Embedding backend runtime directly inside the skill package | Violates the intended boundary that the skill orchestrates but does not become the backend |
@@ -112,12 +109,10 @@
 | BACK-03 | Phase 3 | Pending |
 | BACK-04 | Phase 3 | Pending |
 | BACK-05 | Phase 2 | Pending |
-| MIGR-01 | Phase 2.1 | Pending |
-| MIGR-02 | Phase 2.1 | Pending |
-| MIGR-03 | Phase 2.1 | Pending |
-| MIGR-04 | Phase 2.1 | Pending |
-| MIGR-05 | Phase 2.1 | Pending |
-| MIGR-06 | Phase 2.1 | Pending |
+| SKILL-01 | Phase 5 | Pending |
+| SKILL-02 | Phase 5 | Pending |
+| SKILL-03 | Phase 5 | Pending |
+| SKILL-04 | Phase 5 | Pending |
 | CONN-01 | Phase 4 | Pending |
 | CONN-02 | Phase 4 | Pending |
 | CONN-03 | Phase 4 | Pending |
@@ -127,13 +122,11 @@
 | VERI-02 | Phase 3 | Pending |
 | VERI-03 | Phase 5 | Pending |
 | VERI-04 | Phase 5 | Pending |
-| VERI-05 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 36 total
-- Mapped to phases: 36
+- v1 requirements: 34 total
+- Mapped to phases: 34
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-03-23*
-*Last updated: 2026-03-23 after roadmap creation*
+*Requirements updated: 2026-03-24 after scope realignment*
