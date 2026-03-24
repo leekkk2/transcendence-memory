@@ -1,40 +1,62 @@
 ---
 name: transcendence-memory
-description: Chinese-first bootstrap skill for guiding AI operators through Transcendence Memory setup and safe local configuration.
+description: Use when guiding OpenClaw operators through self-hosted memory setup, backend deployment, frontend connection, health checks, and repair with a public-safe skill pack.
 ---
 
 ## Purpose
 
-`transcendence-memory` 是主要的 AI 引导入口。它负责解释当前机器该走哪条 bootstrap 路径，并调用规范化的 CLI 命令完成本地初始化，而不是把 backend 运行时逻辑塞进 skill 内部。
+`transcendence-memory` 是当前仓库的 canonical operator skill。它是一个**去敏后的通用版本**：保留 `rag-everything-enhancer` 真正有用的前后端配置、部署、验证与修复形状，但移除了私有域名、真实 API key、内网路径和内部专用部署假设。
 
-同时，这个 skill 现在也包含一层经过脱敏的 `rag-everything-enhancer` 迁移兼容说明，避免把当前项目误表述成“已经完整迁移”的 drop-in replacement。
+## Core Principles
+
+- **Keep builtin memory**；RAG / external retrieval 是 enhancement，不是 replacement
+- **Skill guides, runtime executes**：skill 负责引导 AI/operator，CLI 和 backend 负责执行
+- **Public-safe by default**：仓库中只保留模板、占位符和通用 runbook，不保留真实私有值
+- **Two operational surfaces**：
+  - **Frontend / client**：配置 endpoint / auth / container，执行 `health` / `search` / `embed`
+  - **Backend / service**：部署、健康检查、日志排障、systemd 或 Docker 运维
 
 ## Start Here
 
-优先使用这些命令：
-- `transcendence-memory init backend`
-- `transcendence-memory init frontend`
-- `transcendence-memory init both`
-- `transcendence-memory config show`
+优先从这些入口开始：
+- `transcendence-memory init both --dry-run`
+- `transcendence-memory init backend --dry-run`
+- `transcendence-memory init frontend --dry-run`
+- `transcendence-memory backend deploy`
+- `transcendence-memory backend health`
+- `transcendence-memory frontend check`
+- `transcendence-memory frontend smoke`
 - `transcendence-memory doctor`
 
-Default recommendation for first-time users:
-- choose `both`
-- choose `same_machine`
-- use `IP + port` if domain or reverse-proxy information is not ready yet
+Default recommendation for first-time operators:
+1. 先选 `both`
+2. 先走 `same_machine`
+3. 没有域名/反向代理时先用 `IP + port`
+4. 先 `dry-run`，再确认写入
 
-## References
+## Files in this skill
 
-- `references/bootstrap.md` — bootstrap flow for same-machine and split-machine
-- `references/troubleshooting.md` — bootstrap doctor classifications and next actions
-- `references/setup-migration.md` — sanitized migration setup contract from `rag-everything-enhancer`
-- `references/architecture-migration.md` — source vs current architecture expectations
-- `references/dataflow-migration.md` — source API/dataflow semantics and current adaptations
-- `references/operations-migration.md` — source operational acceptance/repair semantics in sanitized form
-- `references/safety-migration.md` — preserved safety and scope notes from `rag-everything-enhancer`
+- `references/setup.md` — frontend + backend setup guide
+- `references/ARCHITECTURE.md` — architecture overview and deployment boundary
+- `references/DATAFLOW.md` — runtime dataflow and acceptance path
+- `references/OPERATIONS.md` — quick verify, rollout acceptance, backend ops
+- `references/VETTING_REPORT.md` — public-safe safety and scope notes
+- `references/env.snippet` — sanitized environment example
+- `references/rag-config.example.json` — sanitized config example
+- `references/load_rag_config.sh` — config loader example
 
-## Notes
+## When to Use
 
-- This skill guides the operator and AI. The CLI is the canonical execution surface.
-- Backend runtime deployment, OAuth completion, and cross-machine handoff are later phases.
-- `rag-everything-enhancer` compatibility is documented explicitly; preserved, adapted, and not-migrated behaviors must be read from the migration references.
+- 你需要在另一台 OpenClaw 主机上启用记忆增强能力
+- 你需要部署、验证或修复自托管 memory backend
+- 你需要一个可公开仓库托管、可让 AI 直接引用的 operator skill pack
+
+## Quick Start
+
+1. Read `references/setup.md`
+2. Prepare `rag-config.example.json` / `env.snippet` locally
+3. Verify `GET /health`
+4. Verify `POST /search`
+5. Verify `POST /embed`
+
+Treat rollout as incomplete until those checks pass for the target environment.
