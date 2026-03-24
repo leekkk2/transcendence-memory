@@ -66,6 +66,10 @@ Recent decisions affecting current work:
 
 - Complete Phase 2 human verification — `.planning/todos/pending/2026-03-24-complete-phase-2-human-verification.md`
 
+### Roadmap Evolution
+
+- Phase 02.1 inserted after Phase 2: Migrate rag-everything-enhancer contracts, docs, config examples, and compatibility expectations into transcendence-memory before further release work (URGENT)
+
 ### Blockers/Concerns
 
 - Phase 2 planning still needs the exact OAuth provider matrix, redirect registration rules, and PKCE/token lifecycle acceptance boundaries.
