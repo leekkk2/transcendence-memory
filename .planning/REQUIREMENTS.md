@@ -37,6 +37,15 @@
 - [ ] **BACK-04**: User can verify backend health from CLI and receive actionable failure guidance
 - [ ] **BACK-05**: Backend service can execute authenticated `search` and `embed` operations against the configured provider and persistence layer
 
+### Migration Compatibility
+
+- [ ] **MIGR-01**: User can read a sanitized migration contract that maps `rag-everything-enhancer` frontend/backend responsibilities onto `transcendence-memory`
+- [ ] **MIGR-02**: User can use sanitized config examples for endpoint, auth header, `defaultContainer`, `RAG_CONFIG_FILE`, and load-script environment variables without inheriting private secrets
+- [ ] **MIGR-03**: User can see documented compatibility expectations for original `rag-everything-enhancer` API/storage semantics, including `container` namespace behavior and any retained or dropped compatibility aliases
+- [ ] **MIGR-04**: Published `transcendence-memory` skill docs include migrated setup, architecture, dataflow, operations, and safety guidance rather than only generic bootstrap notes
+- [ ] **MIGR-05**: Release docs and compatibility artifacts explicitly state which `rag-everything-enhancer` behaviors are preserved, adapted, or intentionally not migrated
+- [ ] **MIGR-06**: Public-facing repository artifacts do not expose original private endpoints, API keys, or internal-only paths from `rag-everything-enhancer`
+
 ### Connection Handoff
 
 - [ ] **CONN-01**: Backend user can export a versioned redacted connection bundle for split-machine setup
@@ -103,6 +112,12 @@
 | BACK-03 | Phase 3 | Pending |
 | BACK-04 | Phase 3 | Pending |
 | BACK-05 | Phase 2 | Pending |
+| MIGR-01 | Phase 2.1 | Pending |
+| MIGR-02 | Phase 2.1 | Pending |
+| MIGR-03 | Phase 2.1 | Pending |
+| MIGR-04 | Phase 2.1 | Pending |
+| MIGR-05 | Phase 2.1 | Pending |
+| MIGR-06 | Phase 2.1 | Pending |
 | CONN-01 | Phase 4 | Pending |
 | CONN-02 | Phase 4 | Pending |
 | CONN-03 | Phase 4 | Pending |
@@ -115,8 +130,8 @@
 | VERI-05 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 30 total
-- Mapped to phases: 30
+- v1 requirements: 36 total
+- Mapped to phases: 36
 - Unmapped: 0
 
 ---
