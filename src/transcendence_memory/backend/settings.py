@@ -24,6 +24,9 @@ class BackendSettings(BaseModel):
     bind_host: str = "127.0.0.1"
     bind_port: int = 8000
     advertised_url: str = "http://127.0.0.1:8000"
+    health_path: str = "/api/v1/health"
+    embed_path: str = "/api/v1/memory/embed"
+    search_path: str = "/api/v1/memory/search"
     auth_mode: str = "api_key"
     provider: str = "openai"
     model: str = "text-embedding-3-small"
@@ -86,7 +89,10 @@ def load_runtime_config(
         provider=bootstrap_config.provider,
         model=bootstrap_config.model,
         provider_base_url=bootstrap_config.base_url or "https://api.openai.com/v1",
-        advertised_url=bootstrap_config.base_url or "http://127.0.0.1:8000",
+        advertised_url=bootstrap_config.advertised_url or "http://127.0.0.1:8000",
+        health_path=bootstrap_config.health_path,
+        embed_path=bootstrap_config.embed_path,
+        search_path=bootstrap_config.search_path,
         auth_mode=bootstrap_config.auth_mode if bootstrap_config.auth_mode else ("oauth" if bootstrap_secrets and bootstrap_secrets.oauth_access_token else "api_key"),
         oauth=OAuthClientConfig(
             issuer=bootstrap_config.oauth_issuer or oauth.issuer,
