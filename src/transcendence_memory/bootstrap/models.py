@@ -66,9 +66,15 @@ class BootstrapConfig(BaseModel):
     role: Role
     topology: Topology
     transport_hint: TransportHint
+    auth_mode: str = "api_key"
     provider: str
     model: str
     base_url: str | None = None
+    oauth_issuer: str | None = None
+    oauth_authorize_url: str | None = None
+    oauth_token_url: str | None = None
+    oauth_client_id: str | None = None
+    oauth_scopes: list[str] = Field(default_factory=lambda: ["openid", "profile", "email"])
     config_path: str
     secret_path: str
     deferred_items: list[str] = Field(default_factory=list)
@@ -77,6 +83,11 @@ class BootstrapConfig(BaseModel):
 class BootstrapSecrets(BaseModel):
     schema_version: int = SCHEMA_VERSION
     api_key: str | None = None
+    oauth_access_token: str | None = None
+    oauth_refresh_token: str | None = None
+    oauth_token_type: str | None = None
+    oauth_subject: str | None = None
+    oauth_expires_at: int | None = None
 
 
 class BootstrapState(BaseModel):

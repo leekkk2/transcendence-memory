@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import Header, HTTPException, Request, status
 
-from .api_keys import header_name, validate_api_key
+from .api_keys import header_name, validate_api_key, validate_bearer_token
 
 
 def require_auth(
@@ -15,11 +15,10 @@ def require_auth(
         return {"auth_mode": "api_key", "principal": "local-operator"}
 
     if authorization:
-        # OAuth bearer validation is added in Phase 2 Plan 04.
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Bearer authentication is not available yet.",
-        )
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and validate_bearer_token(token, runtime):
+            return {"auth_mode": "oauth", "principal": "oauth-subject"}
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid bearer token.")
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
