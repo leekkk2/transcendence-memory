@@ -71,7 +71,11 @@ def load_runtime_config(
     bootstrap_secrets = read_secrets(paths)
 
     if bootstrap_config is None:
+        inferred_auth_mode = "api_key"
+        if bootstrap_secrets and bootstrap_secrets.oauth_access_token:
+            inferred_auth_mode = "oauth"
         settings = BackendSettings(
+            auth_mode=inferred_auth_mode,
             config_path=str(paths.config_root),
             secret_path=str(paths.secret_root),
         )
@@ -83,8 +87,14 @@ def load_runtime_config(
         model=bootstrap_config.model,
         provider_base_url=bootstrap_config.base_url or "https://api.openai.com/v1",
         advertised_url=bootstrap_config.base_url or "http://127.0.0.1:8000",
-        auth_mode="api_key" if bootstrap_secrets and bootstrap_secrets.api_key else "oauth",
-        oauth=oauth,
+        auth_mode=bootstrap_config.auth_mode if bootstrap_config.auth_mode else ("oauth" if bootstrap_secrets and bootstrap_secrets.oauth_access_token else "api_key"),
+        oauth=OAuthClientConfig(
+            issuer=bootstrap_config.oauth_issuer or oauth.issuer,
+            authorize_url=bootstrap_config.oauth_authorize_url or oauth.authorize_url,
+            token_url=bootstrap_config.oauth_token_url or oauth.token_url,
+            client_id=bootstrap_config.oauth_client_id,
+            scopes=bootstrap_config.oauth_scopes,
+        ),
         config_path=str(paths.config_root),
         secret_path=str(paths.secret_root),
     )

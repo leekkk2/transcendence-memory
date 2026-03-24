@@ -54,6 +54,7 @@ def build_bootstrap_config(
         role=selection.role,
         topology=selection.topology,
         transport_hint=selection.transport_hint,
+        auth_mode="api_key",
         provider=selection.provider.provider,
         model=selection.provider.model,
         base_url=selection.provider.base_url or f"http://{detection.local_ip}:8000",
@@ -147,3 +148,31 @@ def secret_file_needs_permission_fix(paths: ResolvedPaths) -> bool:
     if os.name == "nt" or not paths.secret_file.exists():
         return False
     return oct(paths.secret_file.stat().st_mode & 0o777) != "0o600"
+
+
+def update_bootstrap_auth_config(
+    paths: ResolvedPaths,
+    *,
+    auth_mode: str,
+    oauth_issuer: str | None = None,
+    oauth_authorize_url: str | None = None,
+    oauth_token_url: str | None = None,
+    oauth_client_id: str | None = None,
+    oauth_scopes: list[str] | None = None,
+) -> BootstrapConfig | None:
+    config = read_config(paths)
+    if config is None:
+        return None
+
+    updated = config.model_copy(
+        update={
+            "auth_mode": auth_mode,
+            "oauth_issuer": oauth_issuer,
+            "oauth_authorize_url": oauth_authorize_url,
+            "oauth_token_url": oauth_token_url,
+            "oauth_client_id": oauth_client_id,
+            "oauth_scopes": oauth_scopes or config.oauth_scopes,
+        }
+    )
+    write_config(updated, paths)
+    return updated
