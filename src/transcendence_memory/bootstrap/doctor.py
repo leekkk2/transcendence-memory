@@ -66,6 +66,18 @@ def run_doctor(paths: ResolvedPaths, *, fix: bool = False) -> list[DoctorFinding
                     suggested_command=suggestion,
                 )
             )
+        elif not paths.identity_file.exists():
+            findings.append(
+                DoctorFinding(
+                    classification="needs input",
+                    code="missing-identity-doc",
+                    message=(
+                        f"Role identity document {paths.identity_file} is missing. "
+                        f"Confirm that this machine is `{config.role.value}` and补录对应身份后再继续。"
+                    ),
+                    suggested_command=f"transcendence-memory init {config.role.value} --yes",
+                )
+            )
 
     if not paths.secret_file.exists():
         findings.append(

@@ -128,6 +128,7 @@ class ResolvedPaths(BaseModel):
     config_file: Path
     secret_file: Path
     state_file: Path
+    identity_file: Path
 
 
 class BootstrapPlan(BaseModel):

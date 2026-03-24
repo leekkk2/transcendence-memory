@@ -70,6 +70,7 @@ def resolve_paths(
         config_file=config_root / "config.toml",
         secret_file=secret_root / "secrets.toml",
         state_file=config_root / "state.json",
+        identity_file=config_root / "operator-identity.md",
     )
 
 
