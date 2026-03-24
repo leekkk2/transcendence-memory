@@ -24,6 +24,7 @@ from .handoff.importer import import_connection_bundle, load_bundle_from_input, 
 from .handoff.smoke import run_smoke_checks
 from .bootstrap.detect import detect_environment
 from .bootstrap.doctor import render_findings, run_doctor
+from .bootstrap.identity import write_identity_document
 from .bootstrap.models import BootstrapMode, BootstrapSecrets, BootstrapSelection, ProviderSettings, Role, Topology, TransportHint
 from .bootstrap.paths import resolve_paths
 from .bootstrap.persistence import (
@@ -121,9 +122,11 @@ def _run_init(
     write_config(desired_config, paths)
     write_secrets(BootstrapSecrets(api_key=None), paths)
     write_state(selection, plan, desired_config, paths)
+    write_identity_document(selection, paths)
 
     typer.echo("")
     typer.echo("Bootstrap configuration written.")
+    typer.echo(f"Identity document written: {paths.identity_file}")
     typer.echo("Next commands:")
     typer.echo("- transcendence-memory config show")
     typer.echo("- transcendence-memory doctor")
