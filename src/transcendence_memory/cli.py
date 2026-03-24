@@ -9,6 +9,16 @@ from .backend.auth.api_keys import auth_status_from_runtime
 from .backend.auth.oauth import login_via_browser
 from .backend.auth.tokens import clear_token_state, store_token_state
 from .backend.settings import load_runtime_config
+from .deploy.docker import docker_available, render_backend_env_file, run_compose_up, suggested_follow_up_commands
+from .deploy.health import (
+    DOCKER_LOGS_CMD,
+    DOCKER_STATUS_CMD,
+    SYSTEMD_LOGS_CMD,
+    SYSTEMD_STATUS_CMD,
+    classify_runtime_health,
+    health_follow_up_commands,
+    probe_backend_service,
+)
 from .bootstrap.detect import detect_environment
 from .bootstrap.doctor import render_findings, run_doctor
 from .bootstrap.models import BootstrapMode, BootstrapSecrets, BootstrapSelection, ProviderSettings, Role, Topology, TransportHint
@@ -28,10 +38,12 @@ app = typer.Typer(help="Bootstrap and configuration CLI for Transcendence Memory
 init_app = typer.Typer(help="Initialize bootstrap state for backend, frontend, or both roles.")
 config_app = typer.Typer(help="Inspect non-secret bootstrap configuration.")
 auth_app = typer.Typer(help="Inspect and manage authentication state.")
+backend_app = typer.Typer(help="Deploy and operate the backend runtime.")
 
 app.add_typer(init_app, name="init")
 app.add_typer(config_app, name="config")
 app.add_typer(auth_app, name="auth")
+app.add_typer(backend_app, name="backend")
 
 
 def _resolve_topology(
@@ -271,6 +283,84 @@ def auth_logout(
     clear_token_state(paths)
     update_bootstrap_auth_config(paths, auth_mode="api_key")
     typer.echo("Stored OAuth credentials cleared.")
+
+
+@backend_app.command("deploy")
+def backend_deploy(
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Render deployment assets and deploy the backend via Docker Compose."""
+    runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    env_file = Path("deploy/docker/backend.env")
+    plan = render_backend_env_file(runtime.settings, env_file)
+    typer.echo(f"Deployment state: {plan.state}")
+    typer.echo(f"Rendered env file: {plan.env_file}")
+
+    if not docker_available():
+        typer.echo("Docker is not available on this machine.")
+        for command in health_follow_up_commands("docker"):
+            typer.echo(f"- {command}")
+        raise typer.Exit(code=1)
+
+    result = run_compose_up(plan)
+    if result.returncode != 0:
+        typer.echo(result.stderr or result.stdout)
+        for command in health_follow_up_commands("docker"):
+            typer.echo(f"- {command}")
+        raise typer.Exit(code=result.returncode)
+
+    typer.echo("Backend deploy completed.")
+    for command in suggested_follow_up_commands():
+        typer.echo(f"- {command}")
+
+
+@backend_app.command("restart")
+def backend_restart() -> None:
+    """Restart only the backend service in the Compose stack."""
+    if not docker_available():
+        typer.echo("Docker is not available on this machine.")
+        raise typer.Exit(code=1)
+    import subprocess
+
+    result = subprocess.run(["docker", "compose", "restart", "backend"], text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        typer.echo(result.stderr or result.stdout)
+        raise typer.Exit(code=result.returncode)
+    typer.echo("Backend restart completed.")
+    typer.echo(f"- {DOCKER_STATUS_CMD}")
+    typer.echo(f"- {DOCKER_LOGS_CMD}")
+
+
+@backend_app.command("health")
+def backend_health(
+    config_path: Path | None = typer.Option(None, "--config-path"),
+    secret_path: Path | None = typer.Option(None, "--secret-path"),
+) -> None:
+    """Inspect backend deployment health and print exact next commands."""
+    runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    local = classify_runtime_health(runtime, deployment_mode="docker-first")
+    reachable, payload, error = probe_backend_service(runtime)
+
+    result = {
+        "service_reachable": reachable,
+        "local": local,
+        "remote": payload,
+    }
+    typer.echo(json.dumps(result, indent=2))
+
+    if reachable and local["status"] == "ok":
+        return
+
+    failure_type = "docker"
+    if local["deployment"]["mode"] == "systemd":
+        failure_type = "systemd"
+    typer.echo("Next commands:")
+    for command in health_follow_up_commands(failure_type):
+        typer.echo(f"- {command}")
+    if error:
+        typer.echo(f"- probe error: {error}")
+    raise typer.Exit(code=1)
 
 
 @app.command("doctor")
