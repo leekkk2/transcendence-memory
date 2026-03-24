@@ -14,7 +14,7 @@ This roadmap turns Transcendence Memory into a thin OpenClaw skill backed by a t
 - [ ] **Phase 2: Authenticated Backend Core** - Users can authenticate and run real memory operations against the independent backend backed by PostgreSQL + pgvector.
 - [ ] **Phase 3: Cross-Platform Deployment and Health** - Users can deploy and operate the backend reliably through the Docker-first path, with Linux `systemd` as a secondary option.
 - [ ] **Phase 4: Secure Connection Handoff and Verification** - Users can move only redacted connection metadata across machines and prove the end-to-end path works.
-- [ ] **Phase 5: Bilingual Packaging and Release Hardening** - Users get a coherent OpenClaw-ready OSS release surface with bilingual guidance and compatibility protection.
+- [x] **Phase 5: Bilingual Packaging and Release Hardening** - Users get a coherent OpenClaw-ready OSS release surface with bilingual guidance and compatibility protection. (completed 2026-03-24)
 
 ## Phase Details
 
@@ -83,4 +83,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Authenticated Backend Core | 0/TBD | Not started | - |
 | 3. Cross-Platform Deployment and Health | 0/TBD | Not started | - |
 | 4. Secure Connection Handoff and Verification | 0/TBD | Not started | - |
-| 5. Bilingual Packaging and Release Hardening | 0/TBD | Not started | - |
+| 5. Bilingual Packaging and Release Hardening | 0/TBD | Complete    | 2026-03-24 |
