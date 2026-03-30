@@ -2,7 +2,7 @@
 
 ## Why this matters
 
-`rag-everything-enhancer` 类技能最容易出错的地方不是命令本身，而是**身份认知混淆**：
+自托管 memory operator skill 最容易出错的地方不是命令本身，而是**身份认知混淆**：
 
 - 把 `frontend` 机器误当成 `backend`
 - 在 `frontend` 身份下尝试“访问本机后端”
