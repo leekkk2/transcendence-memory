@@ -5,7 +5,7 @@ description: Use when guiding OpenClaw operators through self-hosted memory setu
 
 ## Purpose
 
-`transcendence-memory` 是当前仓库的 canonical operator skill。它是一个**去敏后的通用版本**：保留 `rag-everything-enhancer` 真正有用的前后端配置、部署、验证与修复形状，但移除了私有域名、真实 API key、内网路径和内部专用部署假设。
+`transcendence-memory` 是当前仓库的 canonical operator skill，也是当前前台默认入口。它提供一套**去敏后的通用 operator 形状**：覆盖前后端配置、部署、验证与修复所需的公共流程，但移除了私有域名、真实 API key、内网路径和内部专用部署假设。
 
 ## Core Principles
 
@@ -19,7 +19,7 @@ description: Use when guiding OpenClaw operators through self-hosted memory setu
 
 ## Identity Recognition Rules — Critical / 身份认知规则（高优先级）
 
-这是 `rag-everything-enhancer` operator 经验里最重要的规则之一：**先确认本机身份，再做动作**。
+这是当前 self-hosted memory operator 流程里最重要的规则之一：**先确认本机身份，再做动作**。
 
 在使用本技能时，AI 和用户都必须先确认当前机器属于：
 - `frontend`
