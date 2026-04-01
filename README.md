@@ -30,6 +30,18 @@ This is a Chinese-first self-hosted memory operator repository covering the Open
 - API key、token、secret 始终留在本机安全存储
 - builtin memory 保持启用
 
+## 当前 backend 对接口径 / Current backend alignment
+
+当前 canonical runtime backend 是工作区内的私有服务端仓库 `transcendence-memory-server/`。
+
+对 operator/AI 而言，需要把边界理解为：
+- `transcendence-memory/` 提供 public-safe skill、CLI、部署与排障入口
+- `transcendence-memory-server/` 提供当前真实可运行的私有 HTTP runtime
+- 当前服务端主链是 **LanceDB-only**
+- 当前默认私有服务端口径是 `127.0.0.1:8711`（可经反代暴露为公开/私有 endpoint）
+
+因此，若 operator 文档、systemd 示例、部署 runbook 与 `transcendence-memory-server/README.md` 出现冲突，应以“当前真实 backend runtime”口径继续收口，并同步修正文档，不要把 skill 仓文档当成脱离 backend 现实的独立真相源。
+
 ## 身份优先 / Identity First
 
 开始任何部署、连接、排障或 smoke 之前，先确认当前机器身份：
@@ -120,6 +132,7 @@ Treat rollout as incomplete until the target environment passes:
 1. `GET /health`
 2. `POST /search`
 3. `POST /embed`
+4. when typed ingest is part of the target flow, `POST /ingest-memory/objects`
 
 ## License
 
