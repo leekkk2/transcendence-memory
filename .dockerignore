@@ -1,8 +1,0 @@
-.git
-.venv
-.pytest_cache
-__pycache__
-.planning
-*.pyc
-*.pyo
-*.pyd

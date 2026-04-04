@@ -1,0 +1,11 @@
+# Transcendence Memory 客户端配置
+# 位置：~/.transcendence-memory/config.toml
+# 权限：chmod 600
+
+[connection]
+endpoint = "https://your-memory-endpoint.example.com"  # 后端服务地址
+container = "your-container-name"                        # 命名空间（如 imac、work、lab）
+
+[auth]
+mode = "api_key"                                         # 鉴权模式
+api_key = "your-api-key-here"                            # API 密钥

@@ -1,0 +1,19 @@
+{
+  "name": "transcendence-memory",
+  "description": "Self-hosted memory augmentation skill for Claude Code — connect to your own memory backend, search, embed, and manage retrieval workflows.",
+  "version": "0.2.0",
+  "author": {
+    "name": "zwt"
+  },
+  "homepage": "https://zweiteng.tk/server/transcendence-memory",
+  "repository": "https://zweiteng.tk/server/transcendence-memory",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "rag",
+    "retrieval",
+    "self-hosted",
+    "embedding",
+    "transcendence"
+  ]
+}
