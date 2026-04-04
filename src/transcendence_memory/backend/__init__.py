@@ -1,5 +1,3 @@
-"""Backend runtime package for Transcendence Memory."""
+"""Backend-facing configuration and auth helpers for the Transcendence Memory operator CLI."""
 
-from .app import app
-
-__all__ = ["app"]
+__all__ = []

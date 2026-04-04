@@ -22,8 +22,8 @@ class OAuthClientConfig(BaseModel):
 
 class BackendSettings(BaseModel):
     bind_host: str = "127.0.0.1"
-    bind_port: int = 8000
-    advertised_url: str = "http://127.0.0.1:8000"
+    bind_port: int = 8711
+    advertised_url: str = "http://127.0.0.1:8711"
     health_path: str = "/api/v1/health"
     embed_path: str = "/api/v1/memory/embed"
     search_path: str = "/api/v1/memory/search"
@@ -31,7 +31,6 @@ class BackendSettings(BaseModel):
     provider: str = "openai"
     model: str = "text-embedding-3-small"
     provider_base_url: str = "https://api.openai.com/v1"
-    database_url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/transcendence_memory"
     oauth: OAuthClientConfig = Field(default_factory=OAuthClientConfig)
     config_path: str
     secret_path: str
@@ -89,7 +88,7 @@ def load_runtime_config(
         provider=bootstrap_config.provider,
         model=bootstrap_config.model,
         provider_base_url=bootstrap_config.base_url or "https://api.openai.com/v1",
-        advertised_url=bootstrap_config.advertised_url or "http://127.0.0.1:8000",
+        advertised_url=bootstrap_config.advertised_url or "http://127.0.0.1:8711",
         health_path=bootstrap_config.health_path,
         embed_path=bootstrap_config.embed_path,
         search_path=bootstrap_config.search_path,

@@ -12,8 +12,6 @@ LOCAL_ONLY_HOSTS = {
     "0.0.0.0",
     "::1",
     "backend",
-    "postgres",
-    "db",
     "host.docker.internal",
 }
 

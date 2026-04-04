@@ -1,6 +1,5 @@
 import json
 
-from transcendence_memory.backend.settings import load_runtime_config
 from transcendence_memory.bootstrap.models import BootstrapConfig, BootstrapSecrets, Role, Topology, TransportHint
 from transcendence_memory.bootstrap.paths import resolve_paths
 from transcendence_memory.bootstrap.persistence import write_config, write_secrets
@@ -55,7 +54,7 @@ def test_backend_export_connection_is_redacted(bootstrap_roots, runner) -> None:
 
 
 def test_backend_export_connection_rejects_local_split_machine_endpoint(bootstrap_roots, runner) -> None:
-    _write_backend_config(bootstrap_roots, advertised_url="http://127.0.0.1:8000")
+    _write_backend_config(bootstrap_roots, advertised_url="http://127.0.0.1:8711")
     result = runner.invoke(
         app,
         [
@@ -74,7 +73,7 @@ def test_backend_export_connection_rejects_local_split_machine_endpoint(bootstra
 
 
 def test_backend_export_connection_rejects_reserved_split_machine_ip(bootstrap_roots, runner) -> None:
-    _write_backend_config(bootstrap_roots, advertised_url="http://198.18.0.1:8000")
+    _write_backend_config(bootstrap_roots, advertised_url="http://198.18.0.1:8711")
     result = runner.invoke(
         app,
         [

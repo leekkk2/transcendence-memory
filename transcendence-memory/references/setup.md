@@ -133,7 +133,7 @@ Important:
 
 至少确认：
 - Python / venv 可用
-- FastAPI / Uvicorn 运行所需依赖可用
+- canonical backend runtime 所需依赖可用
 - LanceDB runtime 依赖可用
 - embedding provider / auth / runtime 目录准备完成
 
@@ -142,7 +142,7 @@ Important:
 Repository-owned operator surfaces:
 - `transcendence-memory backend deploy`
 - `transcendence-memory backend health`
-- `deploy/systemd/transcendence-memory-backend.service`
+- `transcendence-memory backend export-connection`
 
 Current runtime truth surfaces:
 - `transcendence-memory-server/README.md`
