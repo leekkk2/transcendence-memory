@@ -21,14 +21,27 @@ def test_runbook_set_exists() -> None:
     assert Path("docs/frontend-handoff.md").exists()
     assert Path("docs/authentication.md").exists()
     assert Path("docs/troubleshooting.md").exists()
+    assert Path("docs/guide/INDEX.md").exists()
+    assert Path("docs/guide/installation.md").exists()
+    assert Path("docs/guide/backend-deployment.md").exists()
+    assert Path("docs/guide/frontend-handoff.md").exists()
+    assert Path("docs/guide/auth-handoff.md").exists()
 
 
 def test_runbooks_reference_real_commands() -> None:
     backend = Path("docs/backend-deploy.md").read_text(encoding="utf-8")
     handoff = Path("docs/frontend-handoff.md").read_text(encoding="utf-8")
+    guide_install = Path("docs/guide/installation.md").read_text(encoding="utf-8")
+    guide_backend = Path("docs/guide/backend-deployment.md").read_text(encoding="utf-8")
+    guide_frontend = Path("docs/guide/frontend-handoff.md").read_text(encoding="utf-8")
+    guide_auth = Path("docs/guide/auth-handoff.md").read_text(encoding="utf-8")
     assert "backend deploy" in backend
     assert "backend 身份" in backend
     assert "frontend import-connection" in handoff
     assert "frontend 身份" in handoff
+    assert "./scripts/bootstrap_dev.sh" in guide_install
+    assert "backend export-connection" in guide_backend
+    assert "frontend import-connection" in guide_frontend
+    assert "auth set-api-key" in guide_auth
     assert "auth login" in Path("docs/authentication.md").read_text(encoding="utf-8")
     assert "backend health" in Path("docs/troubleshooting.md").read_text(encoding="utf-8")

@@ -16,6 +16,11 @@
 - `docs/authentication.md`
 - `docs/troubleshooting.md`
 - `docs/release-compatibility.md`
+- `docs/guide/INDEX.md`
+- `docs/guide/installation.md`
+- `docs/guide/backend-deployment.md`
+- `docs/guide/frontend-handoff.md`
+- `docs/guide/auth-handoff.md`
 
 ### 2. 兼容矩阵
 
