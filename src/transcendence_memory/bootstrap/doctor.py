@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 from pydantic import BaseModel
 
@@ -99,13 +100,22 @@ def run_doctor(paths: ResolvedPaths, *, fix: bool = False) -> list[DoctorFinding
         )
 
     detection = detect_environment(paths)
-    if not detection.docker_available:
+    if shutil.which("docker") is None:
         findings.append(
             DoctorFinding(
                 classification="manual follow-up",
                 code="docker-missing",
                 message="Docker CLI is not available on this machine.",
                 suggested_command="Install Docker, then re-run `transcendence-memory doctor`.",
+            )
+        )
+    elif detection.docker_requires_sudo and not detection.docker_sudo_works:
+        findings.append(
+            DoctorFinding(
+                classification="manual follow-up",
+                code="docker-requires-sudo-auth",
+                message="Docker exists on the host, but this session needs sudo/authorization before it can use the host Docker daemon.",
+                suggested_command="Run the deployment from a host session with sudo-capable Docker access, then re-run `transcendence-memory doctor`.",
             )
         )
     if detection.port_conflicts:
