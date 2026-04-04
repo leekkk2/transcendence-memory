@@ -67,6 +67,23 @@ This is a Chinese-first self-hosted memory operator repository covering the Open
 - `backend` → 优先看 `docs/backend-deploy.md`
 - `both` → 先 backend，再 frontend，再 smoke
 
+## 本地开发 / Local Dev
+
+在全新或隔离环境中，先建立项目自己的开发虚拟环境，再运行 CLI / pytest。
+
+```bash
+./scripts/bootstrap_dev.sh
+. .venv/bin/activate
+python -m pytest -q
+```
+
+它内部会完成：
+- 创建/复用 `.venv`
+- 升级 `pip`
+- 执行 `python -m pip install -e '.[dev]'`
+
+如果你只是临时进入仓库直接跑 `pytest`，很容易因为没有先安装项目依赖而遇到 `ModuleNotFoundError: No module named 'typer'` 这类假阻塞。该仓库的本地验证基线默认依赖 editable install。
+
 ## 快速路径 / Quickstart
 
 ### same-machine
@@ -90,6 +107,8 @@ transcendence-memory frontend smoke
 transcendence-memory init backend --topology split_machine --dry-run
 transcendence-memory init backend --topology split_machine --yes
 transcendence-memory backend deploy
+# 设备特定提醒：若当前机器上的宿主机 Docker 需要 sudo，请从宿主机 shell 继续执行 sudo docker compose follow-up。
+# 先把 config.toml 里的 advertised_url 改成前端可达的公网域名/公网 IP，再导出 bundle。
 transcendence-memory backend export-connection --topology split_machine
 ```
 

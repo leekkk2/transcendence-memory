@@ -14,6 +14,14 @@ SYSTEMD_STATUS_CMD = "systemctl status transcendence-memory-backend"
 SYSTEMD_LOGS_CMD = "journalctl -u transcendence-memory-backend -n 100 --no-pager"
 
 
+def docker_follow_up_commands(command_prefix: list[str] | None = None) -> list[str]:
+    compose = " ".join([*(command_prefix or ["docker"]), "compose"])
+    return [
+        f"{compose} ps",
+        f"{compose} logs backend --tail=100",
+    ]
+
+
 def classify_runtime_health(runtime, *, deployment_mode: str) -> dict[str, Any]:
     database = {"status": "unknown", "details": "database health not checked"}
     try:
@@ -51,8 +59,9 @@ def probe_backend_service(runtime) -> tuple[bool, dict[str, Any] | None, str | N
         return False, None, str(exc)
 
 
-def health_follow_up_commands(failure_type: str) -> list[str]:
-    commands = [DOCKER_STATUS_CMD, DOCKER_LOGS_CMD, SYSTEMD_STATUS_CMD, SYSTEMD_LOGS_CMD]
+def health_follow_up_commands(failure_type: str, *, command_prefix: list[str] | None = None) -> list[str]:
+    docker_commands = docker_follow_up_commands(command_prefix)
+    commands = [*docker_commands, SYSTEMD_STATUS_CMD, SYSTEMD_LOGS_CMD]
     if failure_type == "docker":
         return commands
     if failure_type == "systemd":
