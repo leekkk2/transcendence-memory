@@ -9,6 +9,14 @@ from transcendence_memory.backend.settings import BackendSettings
 
 
 @dataclass
+class DockerAccess:
+    available: bool
+    requires_sudo: bool
+    command_prefix: list[str]
+    reason: str | None = None
+
+
+@dataclass
 class DockerDeployPlan:
     state: str
     env_file: Path
@@ -16,8 +24,43 @@ class DockerDeployPlan:
     command: list[str]
 
 
-def docker_compose_command() -> list[str]:
-    return ["docker", "compose"]
+def detect_docker_access() -> DockerAccess:
+    docker_bin = shutil.which("docker")
+    if docker_bin is None:
+        return DockerAccess(available=False, requires_sudo=False, command_prefix=[], reason="docker-cli-missing")
+
+    direct = subprocess.run(
+        [docker_bin, "info"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if direct.returncode == 0:
+        return DockerAccess(available=True, requires_sudo=False, command_prefix=[docker_bin], reason=None)
+
+    sudo_bin = shutil.which("sudo")
+    if sudo_bin is not None:
+        sudo_check = subprocess.run(
+            [sudo_bin, "-n", docker_bin, "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if sudo_check.returncode == 0:
+            return DockerAccess(available=True, requires_sudo=True, command_prefix=[sudo_bin, docker_bin], reason=None)
+        return DockerAccess(
+            available=False,
+            requires_sudo=True,
+            command_prefix=[sudo_bin, docker_bin],
+            reason="docker-requires-sudo-auth",
+        )
+
+    return DockerAccess(available=False, requires_sudo=False, command_prefix=[docker_bin], reason="docker-access-denied")
+
+
+def docker_compose_command(command_prefix: list[str] | None = None) -> list[str]:
+    prefix = command_prefix or ["docker"]
+    return [*prefix, "compose"]
 
 
 def render_backend_env(settings: BackendSettings) -> str:
@@ -42,7 +85,12 @@ def classify_deploy_state(desired_env: str, env_file: Path) -> str:
     return "update"
 
 
-def render_backend_env_file(settings: BackendSettings, env_file: Path) -> DockerDeployPlan:
+def render_backend_env_file(
+    settings: BackendSettings,
+    env_file: Path,
+    *,
+    command_prefix: list[str] | None = None,
+) -> DockerDeployPlan:
     env_file.parent.mkdir(parents=True, exist_ok=True)
     desired = render_backend_env(settings)
     state = classify_deploy_state(desired, env_file)
@@ -52,20 +100,21 @@ def render_backend_env_file(settings: BackendSettings, env_file: Path) -> Docker
         state=state,
         env_file=env_file,
         compose_file=Path("compose.yaml"),
-        command=docker_compose_command() + ["up", "-d"],
+        command=docker_compose_command(command_prefix) + ["up", "-d"],
     )
 
 
 def docker_available() -> bool:
-    return shutil.which("docker") is not None
+    return detect_docker_access().available
 
 
 def run_compose_up(plan: DockerDeployPlan) -> subprocess.CompletedProcess[str]:
     return subprocess.run(plan.command, text=True, capture_output=True, check=False)
 
 
-def suggested_follow_up_commands() -> list[str]:
+def suggested_follow_up_commands(command_prefix: list[str] | None = None) -> list[str]:
+    compose = " ".join(docker_compose_command(command_prefix))
     return [
-        "docker compose ps",
-        "docker compose logs backend --tail=100",
+        f"{compose} ps",
+        f"{compose} logs backend --tail=100",
     ]
