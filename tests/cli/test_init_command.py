@@ -53,7 +53,7 @@ def test_init_both_writes_non_secret_config(bootstrap_roots, runner) -> None:
             "--model",
             "text-embedding-3-small",
             "--base-url",
-            "http://127.0.0.1:8000",
+            "http://127.0.0.1:8711",
             "--config-path",
             str(bootstrap_roots["config_root"]),
             "--secret-path",
@@ -64,7 +64,7 @@ def test_init_both_writes_non_secret_config(bootstrap_roots, runner) -> None:
     assert result.exit_code == 0
     config_text = (bootstrap_roots["config_root"] / "config.toml").read_text(encoding="utf-8")
     assert "provider = \"openai\"" in config_text
-    assert "base_url = \"http://127.0.0.1:8000\"" in config_text
+    assert "base_url = \"http://127.0.0.1:8711\"" in config_text
 
 
 def test_init_frontend_writes_role_identity_document(bootstrap_roots, runner) -> None:
