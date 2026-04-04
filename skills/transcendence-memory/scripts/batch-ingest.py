@@ -30,7 +30,7 @@ RETRY_DELAY = 2  # 秒
 def send_batch(endpoint: str, api_key: str, container: str,
                objects: list[dict], retry: int = 0) -> dict:
     url = f"{endpoint}/ingest-memory/objects"
-    payload = json.dumps({"container": container, "objects": objects}).encode()
+    payload = json.dumps({"container": container, "objects": objects, "auto_embed": False}).encode()
     req = urllib.request.Request(
         url,
         data=payload,

@@ -16,6 +16,10 @@ curl -sS -i "${ENDPOINT}/health"
 
 ## 通用问题
 
+### health 返回空容器列表
+
+`available_containers: []` 是正常的 — 容器在首次写入数据时按需创建。新部署的 server 没有任何容器。
+
 ### 配置文件不存在
 
 尚未完成首次配置。参考 `references/setup.md`。
