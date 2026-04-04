@@ -16,6 +16,7 @@
 - `docs/authentication.md`
 - `docs/troubleshooting.md`
 - `docs/release-compatibility.md`
+- `docs/guide/HUMAN_GUIDE_INDEX.md`
 - `docs/guide/INDEX.md`
 - `docs/guide/installation.md`
 - `docs/guide/backend-deployment.md`

@@ -58,7 +58,7 @@ def build_bootstrap_config(
         provider=selection.provider.provider,
         model=selection.provider.model,
         base_url=selection.provider.base_url,
-        advertised_url=f"http://{detection.local_ip}:8000",
+        advertised_url=f"http://{detection.local_ip}:8711",
         config_path=str(paths.config_root),
         secret_path=str(paths.secret_root),
         deferred_items=deferred_items,

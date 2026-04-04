@@ -20,7 +20,7 @@ def test_connection_bundle_has_expected_fields() -> None:
 def test_connection_bundle_serialization_has_no_secret_fields() -> None:
     bundle = ConnectionBundle(
         topology=Topology.SAME_MACHINE,
-        backend=BundleBackend(advertised_url="http://127.0.0.1:8000"),
+        backend=BundleBackend(advertised_url="http://127.0.0.1:8711"),
         auth=BundleAuth(mode="oauth", required_local_inputs=["oauth_login"]),
         provider=BundleProvider(provider="openai", model="text-embedding-3-small"),
         compatibility=BundleCompatibility(backend_version="0.1.0"),

@@ -9,7 +9,7 @@ from transcendence_memory.bootstrap.models import Topology
 def test_same_machine_import_then_smoke(monkeypatch, bootstrap_roots, runner) -> None:
     bundle = ConnectionBundle(
         topology=Topology.SAME_MACHINE,
-        backend=BundleBackend(advertised_url="http://127.0.0.1:8000"),
+        backend=BundleBackend(advertised_url="http://127.0.0.1:8711"),
         auth=BundleAuth(mode="api_key", required_local_inputs=["api_key"]),
         provider=BundleProvider(provider="openai", model="text-embedding-3-small", base_url="https://api.openai.com/v1"),
         compatibility=BundleCompatibility(backend_version="0.1.0"),

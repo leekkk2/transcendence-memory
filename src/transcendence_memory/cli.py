@@ -9,16 +9,8 @@ from .backend.auth.api_keys import auth_status_from_runtime
 from .backend.auth.oauth import login_via_browser
 from .backend.auth.tokens import clear_token_state, store_token_state
 from .backend.settings import load_runtime_config
-from .deploy.docker import detect_docker_access, docker_available, render_backend_env_file, run_compose_up, suggested_follow_up_commands
-from .deploy.health import (
-    DOCKER_LOGS_CMD,
-    DOCKER_STATUS_CMD,
-    SYSTEMD_LOGS_CMD,
-    SYSTEMD_STATUS_CMD,
-    classify_runtime_health,
-    health_follow_up_commands,
-    probe_backend_service,
-)
+from .deploy.docker import detect_docker_access, suggested_follow_up_commands
+from .deploy.health import classify_runtime_health, health_follow_up_commands, probe_backend_service
 from .handoff.export import build_connection_bundle, dump_bundle
 from .handoff.importer import import_connection_bundle, load_bundle_from_input, missing_local_inputs
 from .handoff.smoke import run_smoke_checks
@@ -298,54 +290,33 @@ def backend_deploy(
     config_path: Path | None = typer.Option(None, "--config-path"),
     secret_path: Path | None = typer.Option(None, "--secret-path"),
 ) -> None:
-    """Render deployment assets and deploy the backend via Docker Compose."""
+    """Show deployment preflight and handoff guidance for the canonical backend runtime."""
     runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
     docker_access = detect_docker_access()
-    env_file = Path("deploy/docker/backend.env")
-    plan = render_backend_env_file(runtime.settings, env_file, command_prefix=docker_access.command_prefix or ["docker"])
-    typer.echo(f"Deployment state: {plan.state}")
-    typer.echo(f"Rendered env file: {plan.env_file}")
-
-    if not docker_access.available:
-        if docker_access.requires_sudo:
-            typer.echo("Docker exists on the host, but this session cannot use it directly. Re-run from a sudo-capable host shell or authorized session.")
-        else:
-            typer.echo("Docker is not available on this machine.")
-        for command in health_follow_up_commands("docker", command_prefix=docker_access.command_prefix or ["docker"]):
-            typer.echo(f"- {command}")
-        raise typer.Exit(code=1)
-
-    result = run_compose_up(plan)
-    if result.returncode != 0:
-        typer.echo(result.stderr or result.stdout)
-        for command in health_follow_up_commands("docker", command_prefix=docker_access.command_prefix or ["docker"]):
-            typer.echo(f"- {command}")
-        raise typer.Exit(code=result.returncode)
-
-    typer.echo("Backend deploy completed.")
+    typer.echo("This public repository no longer deploys a bundled backend runtime.")
+    typer.echo("Use the canonical backend runtime and treat this repo as the skill/deployment/handoff surface.")
+    typer.echo(f"Advertised URL: {runtime.settings.advertised_url}")
+    typer.echo(f"Health path: {runtime.settings.health_path}")
+    typer.echo(f"Auth mode: {runtime.settings.auth_mode}")
+    typer.echo("Host Docker checks:")
+    if docker_access.available:
+        typer.echo("- Docker access: available")
+    elif docker_access.requires_sudo:
+        typer.echo("- Docker access: host Docker exists but requires sudo/authorization in this session")
+    else:
+        typer.echo("- Docker access: unavailable in this session")
     for command in suggested_follow_up_commands(docker_access.command_prefix or ["docker"]):
         typer.echo(f"- {command}")
+    typer.echo("Next step: deploy the canonical backend runtime, then return here for export-connection and frontend handoff.")
+    raise typer.Exit(code=1)
 
 
 @backend_app.command("restart")
 def backend_restart() -> None:
-    """Restart only the backend service in the Compose stack."""
-    docker_access = detect_docker_access()
-    if not docker_access.available:
-        if docker_access.requires_sudo:
-            typer.echo("Docker exists on the host, but this session cannot use it directly. Re-run from a sudo-capable host shell or authorized session.")
-        else:
-            typer.echo("Docker is not available on this machine.")
-        raise typer.Exit(code=1)
-    import subprocess
-
-    result = subprocess.run([*(docker_access.command_prefix or ["docker"]), "compose", "restart", "backend"], text=True, capture_output=True, check=False)
-    if result.returncode != 0:
-        typer.echo(result.stderr or result.stdout)
-        raise typer.Exit(code=result.returncode)
-    typer.echo("Backend restart completed.")
-    for command in suggested_follow_up_commands(docker_access.command_prefix or ["docker"]):
-        typer.echo(f"- {command}")
+    """Explain how to restart the canonical backend runtime outside this public repository."""
+    typer.echo("This public repository no longer restarts a bundled backend runtime.")
+    typer.echo("Restart the canonical backend runtime in its own deployment context, then re-run backend health here.")
+    raise typer.Exit(code=1)
 
 
 @backend_app.command("health")
@@ -365,15 +336,12 @@ def backend_health(
     }
     typer.echo(json.dumps(result, indent=2))
 
-    if reachable and local["status"] == "ok":
+    if reachable:
         return
 
-    failure_type = "docker"
-    if local["deployment"]["mode"] == "systemd":
-        failure_type = "systemd"
     docker_access = detect_docker_access()
     typer.echo("Next commands:")
-    for command in health_follow_up_commands(failure_type, command_prefix=docker_access.command_prefix or ["docker"]):
+    for command in health_follow_up_commands("docker", command_prefix=docker_access.command_prefix or ["docker"]):
         typer.echo(f"- {command}")
     if error:
         typer.echo(f"- probe error: {error}")
