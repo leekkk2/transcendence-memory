@@ -9,7 +9,7 @@ from .backend.auth.api_keys import auth_status_from_runtime
 from .backend.auth.oauth import login_via_browser
 from .backend.auth.tokens import clear_token_state, store_token_state
 from .backend.settings import load_runtime_config
-from .deploy.docker import docker_available, render_backend_env_file, run_compose_up, suggested_follow_up_commands
+from .deploy.docker import detect_docker_access, docker_available, render_backend_env_file, run_compose_up, suggested_follow_up_commands
 from .deploy.health import (
     DOCKER_LOGS_CMD,
     DOCKER_STATUS_CMD,
@@ -300,44 +300,52 @@ def backend_deploy(
 ) -> None:
     """Render deployment assets and deploy the backend via Docker Compose."""
     runtime = load_runtime_config(config_path=config_path, secret_path=secret_path)
+    docker_access = detect_docker_access()
     env_file = Path("deploy/docker/backend.env")
-    plan = render_backend_env_file(runtime.settings, env_file)
+    plan = render_backend_env_file(runtime.settings, env_file, command_prefix=docker_access.command_prefix or ["docker"])
     typer.echo(f"Deployment state: {plan.state}")
     typer.echo(f"Rendered env file: {plan.env_file}")
 
-    if not docker_available():
-        typer.echo("Docker is not available on this machine.")
-        for command in health_follow_up_commands("docker"):
+    if not docker_access.available:
+        if docker_access.requires_sudo:
+            typer.echo("Docker exists on the host, but this session cannot use it directly. Re-run from a sudo-capable host shell or authorized session.")
+        else:
+            typer.echo("Docker is not available on this machine.")
+        for command in health_follow_up_commands("docker", command_prefix=docker_access.command_prefix or ["docker"]):
             typer.echo(f"- {command}")
         raise typer.Exit(code=1)
 
     result = run_compose_up(plan)
     if result.returncode != 0:
         typer.echo(result.stderr or result.stdout)
-        for command in health_follow_up_commands("docker"):
+        for command in health_follow_up_commands("docker", command_prefix=docker_access.command_prefix or ["docker"]):
             typer.echo(f"- {command}")
         raise typer.Exit(code=result.returncode)
 
     typer.echo("Backend deploy completed.")
-    for command in suggested_follow_up_commands():
+    for command in suggested_follow_up_commands(docker_access.command_prefix or ["docker"]):
         typer.echo(f"- {command}")
 
 
 @backend_app.command("restart")
 def backend_restart() -> None:
     """Restart only the backend service in the Compose stack."""
-    if not docker_available():
-        typer.echo("Docker is not available on this machine.")
+    docker_access = detect_docker_access()
+    if not docker_access.available:
+        if docker_access.requires_sudo:
+            typer.echo("Docker exists on the host, but this session cannot use it directly. Re-run from a sudo-capable host shell or authorized session.")
+        else:
+            typer.echo("Docker is not available on this machine.")
         raise typer.Exit(code=1)
     import subprocess
 
-    result = subprocess.run(["docker", "compose", "restart", "backend"], text=True, capture_output=True, check=False)
+    result = subprocess.run([*(docker_access.command_prefix or ["docker"]), "compose", "restart", "backend"], text=True, capture_output=True, check=False)
     if result.returncode != 0:
         typer.echo(result.stderr or result.stdout)
         raise typer.Exit(code=result.returncode)
     typer.echo("Backend restart completed.")
-    typer.echo(f"- {DOCKER_STATUS_CMD}")
-    typer.echo(f"- {DOCKER_LOGS_CMD}")
+    for command in suggested_follow_up_commands(docker_access.command_prefix or ["docker"]):
+        typer.echo(f"- {command}")
 
 
 @backend_app.command("health")
@@ -363,8 +371,9 @@ def backend_health(
     failure_type = "docker"
     if local["deployment"]["mode"] == "systemd":
         failure_type = "systemd"
+    docker_access = detect_docker_access()
     typer.echo("Next commands:")
-    for command in health_follow_up_commands(failure_type):
+    for command in health_follow_up_commands(failure_type, command_prefix=docker_access.command_prefix or ["docker"]):
         typer.echo(f"- {command}")
     if error:
         typer.echo(f"- probe error: {error}")
@@ -390,6 +399,11 @@ def backend_export_connection(
     rendered = dump_bundle(bundle, output=output)
     if output is not None:
         typer.echo(f"Bundle written: {output}")
+        typer.echo("Frontend handoff steps:")
+        for step in bundle.auth.frontend_handoff_steps:
+            typer.echo(f"- {step}")
+        typer.echo(f"- 当前鉴权模式: {bundle.auth.mode}")
+        typer.echo(f"- 前端仍需本地补齐: {', '.join(bundle.auth.required_local_inputs) if bundle.auth.required_local_inputs else 'none'}")
     else:
         typer.echo(rendered)
 

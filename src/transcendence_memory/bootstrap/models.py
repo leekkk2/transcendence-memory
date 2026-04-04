@@ -67,6 +67,8 @@ class DetectionResult(BaseModel):
     shell: str
     docker_available: bool
     docker_compose_available: bool
+    docker_requires_sudo: bool = False
+    docker_sudo_works: bool = False
     config_path_writable: bool
     secret_path_writable: bool
     port_conflicts: list[int] = Field(default_factory=list)

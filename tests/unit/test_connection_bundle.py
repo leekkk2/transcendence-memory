@@ -14,6 +14,7 @@ def test_connection_bundle_has_expected_fields() -> None:
     assert payload["bundle_version"] == "1"
     assert payload["backend"]["advertised_url"] == "https://memory.example"
     assert payload["auth"]["required_local_inputs"] == ["api_key"]
+    assert payload["auth"]["frontend_handoff_steps"]
 
 
 def test_connection_bundle_serialization_has_no_secret_fields() -> None:

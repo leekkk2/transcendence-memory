@@ -18,5 +18,12 @@ def test_split_machine_rejects_localhost() -> None:
         ensure_exportable_endpoint("http://127.0.0.1:8000", Topology.SPLIT_MACHINE)
 
 
+def test_split_machine_rejects_private_and_reserved_ips() -> None:
+    with pytest.raises(ValueError):
+        ensure_exportable_endpoint("http://192.168.1.10:8000", Topology.SPLIT_MACHINE)
+    with pytest.raises(ValueError):
+        ensure_exportable_endpoint("http://198.18.0.1:8000", Topology.SPLIT_MACHINE)
+
+
 def test_split_machine_allows_public_endpoint() -> None:
     assert ensure_exportable_endpoint("https://memory.example.com", Topology.SPLIT_MACHINE) == "https://memory.example.com"

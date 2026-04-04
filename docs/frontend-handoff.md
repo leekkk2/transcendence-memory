@@ -17,13 +17,22 @@
 ### 后端机器导出
 
 ```bash
-transcendence-memory backend export-connection --topology split_machine
+transcendence-memory backend export-connection --topology split_machine --output bundle.json
 ```
+
+导出成功后，CLI 应同时明确告诉部署方：
+- 当前前端要使用的鉴权模式
+- 前端仍需本地补齐哪些鉴权材料
+- 前端下一步应执行的命令顺序
+
+也就是说，后端部署完成后，不应该只把 `bundle.json` 丢给前端，还应把 CLI 输出的 handoff 提醒一并交给前端操作员。
 
 ### 前端机器导入
 
 ```bash
 transcendence-memory frontend import-connection --bundle-file bundle.json
+# 如果后端导出时提示 auth mode=api_key，则前端需要补：
+transcendence-memory auth set-api-key --api-key <frontend-local-api-key>
 transcendence-memory frontend check
 transcendence-memory frontend smoke
 ```
@@ -32,7 +41,8 @@ transcendence-memory frontend smoke
 
 - bundle 只包含非敏感信息
 - API key、token、secret 不应包含在 bundle 中
-- split-machine 不允许导出 `127.0.0.1` / `localhost` 作为前端连接目标
+- split-machine 不允许导出 `127.0.0.1` / `localhost` / 私有网段 / 保留测试网 IP 作为前端连接目标
+- 如果 backend `config.toml` 里的 `advertised_url` 仍是本机回环、局域网或测试地址，先改成前端实际可达的公网域名/公网 IP，再执行导出
 - 前端机器需要自行补齐本地 secret
 
 ### Acceptance
