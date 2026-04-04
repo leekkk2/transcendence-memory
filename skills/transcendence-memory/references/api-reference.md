@@ -59,6 +59,9 @@ curl -sS -X POST "${ENDPOINT}/embed" \
 | `container` | string | 是 | 目标容器 |
 | `background` | bool | 否 | 后台执行 |
 | `wait` | bool | 否 | 等待完成 |
+| `timeout_s` | int | 否 | 超时秒数（默认 600，大容器可设更高） |
+
+> **注意**：默认 timeout 为 600 秒。50+ 条记忆的容器 embed 可能需要数分钟。如仍超时，增大 `timeout_s` 或使用 `background: true` 异步模式。
 | `timeout_s` | int | 否 | 超时秒数 |
 
 ### POST /ingest-memory/objects
@@ -83,7 +86,7 @@ curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
   }'
 ```
 
-写入后需调用 `/embed` 刷新索引。
+默认自动在后台触发 embed（`auto_embed: true`）。批量入库时建议设 `auto_embed: false`，最后手动调一次 `/embed`。
 
 响应示例：
 ```json
