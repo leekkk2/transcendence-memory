@@ -140,6 +140,13 @@ transcendence-memory frontend smoke
 - `docs/release-compatibility.md`
 - `docs/release-process.md`
 
+### Fetchable guides for LLM agents
+- `docs/guide/INDEX.md`
+- `docs/guide/installation.md`
+- `docs/guide/backend-deployment.md`
+- `docs/guide/frontend-handoff.md`
+- `docs/guide/auth-handoff.md`
+
 ### Public-safe examples
 - `docs/examples/rag-config.example.json`
 - `docs/examples/env.snippet`
