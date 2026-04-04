@@ -1,48 +1,45 @@
 # Transcendence Memory
 
-中文优先的自托管记忆 operator 仓库，面向 OpenClaw skill、CLI、backend 服务，以及前后端分离部署场景。
+中文优先的技能与部署仓库，聚焦三件事：
+- skill 入口
+- CLI 使用
+- backend / frontend handoff 与部署文档
 
-This is a Chinese-first self-hosted memory operator repository covering the OpenClaw skill pack, CLI, backend service, and split-machine deployment flows.
+This repository focuses on operator-facing materials only:
+- skill entrypoints
+- CLI usage
+- backend deployment
+- frontend handoff
 
-## 项目是什么 / What This Is
+## Scope
 
-`Transcendence Memory` 的目标是提供一套**可公开托管、可让 AI 直接引用、可用于实际部署**的记忆能力工具链：
+这里只保留对当前使用者直接有用的内容：
+- 如何初始化
+- 如何部署 backend
+- 如何导出并交接给 frontend
+- 如何配置 auth
+- 如何排障
 
-- `transcendence-memory/`：canonical OpenClaw skill pack
-- `src/transcendence_memory/`：Python CLI 与 backend runtime
-- `deploy/docker/`、`deploy/systemd/`：部署资产
-- `docs/`：前后端配置、认证、连接与排障 runbook
+不展开项目背景、产品叙事或长期架构说明。
 
-它不是“只有说明文档的 skill”，也不是“把 backend 塞进 skill 里”的单体包。skill 负责引导，CLI 和 backend 负责执行。
+## Runtime Alignment
 
-## 灵感来源 / Inspiration
+当前 operator 文档默认对接 `transcendence-memory-server/` 的真实 backend runtime。
+若 skill/operator 文档与 backend runtime 文档冲突，应以当前 backend runtime 真相为准，并回写本仓库文档。
 
-本项目受 `memory-lancedb-pro` 启发，尤其是在：
-- 把 deploy / auth / provider 配置显式化
-- 让 AI/operator 通过技能和 runbook 完成部署与验证
+当前默认私有服务端口径：`127.0.0.1:8711`
+当前服务端主链：**LanceDB-only**
 
-## 核心边界 / Product Boundary
+## Boundaries
 
-- `skill` 是 operator 入口，不是 runtime 本体
-- `CLI` 是标准执行面
-- `backend` 是独立可运行服务
-- `frontend handoff` 只交换非敏感信息
-- API key、token、secret 始终留在本机安全存储
-- builtin memory 保持启用
+- `skill`：入口与说明
+- `CLI`：执行面
+- `backend deployment`：后端部署与健康检查
+- `frontend handoff`：前后端连接交付
+- `auth`：本地鉴权材料配置与检查
+- secrets 不进入 bundle，不出现在普通文档示例中
 
-## 当前 backend 对接口径 / Current backend alignment
-
-当前 canonical runtime backend 是工作区内的私有服务端仓库 `transcendence-memory-server/`。
-
-对 operator/AI 而言，需要把边界理解为：
-- `transcendence-memory/` 提供 public-safe skill、CLI、部署与排障入口
-- `transcendence-memory-server/` 提供当前真实可运行的私有 HTTP runtime
-- 当前服务端主链是 **LanceDB-only**
-- 当前默认私有服务端口径是 `127.0.0.1:8711`（可经反代暴露为公开/私有 endpoint）
-
-因此，若 operator 文档、systemd 示例、部署 runbook 与 `transcendence-memory-server/README.md` 出现冲突，应以“当前真实 backend runtime”口径继续收口，并同步修正文档，不要把 skill 仓文档当成脱离 backend 现实的独立真相源。
-
-## 身份优先 / Identity First
+## Identity First
 
 开始任何部署、连接、排障或 smoke 之前，先确认当前机器身份：
 
@@ -67,7 +64,7 @@ This is a Chinese-first self-hosted memory operator repository covering the Open
 - `backend` → 优先看 `docs/backend-deploy.md`
 - `both` → 先 backend，再 frontend，再 smoke
 
-## 本地开发 / Local Dev
+## Local Dev
 
 在全新或隔离环境中，先建立项目自己的开发虚拟环境，再运行 CLI / pytest。
 
@@ -84,7 +81,7 @@ python -m pytest -q
 
 如果你只是临时进入仓库直接跑 `pytest`，很容易因为没有先安装项目依赖而遇到 `ModuleNotFoundError: No module named 'typer'` 这类假阻塞。该仓库的本地验证基线默认依赖 editable install。
 
-## 快速路径 / Quickstart
+## Quickstart
 
 ### same-machine
 
@@ -122,7 +119,7 @@ transcendence-memory frontend check
 transcendence-memory frontend smoke
 ```
 
-## 文档导航 / Documentation
+## Documentation
 
 ### Skill package
 - `transcendence-memory/SKILL.md`
@@ -140,6 +137,13 @@ transcendence-memory frontend smoke
 - `docs/release-compatibility.md`
 - `docs/release-process.md`
 
+### Human-readable guides
+- `docs/guide/HUMAN_GUIDE_INDEX.md`
+- `docs/guide/installation.md`
+- `docs/guide/backend-deployment.md`
+- `docs/guide/frontend-handoff.md`
+- `docs/guide/auth-handoff.md`
+
 ### Fetchable guides for LLM agents
 - `docs/guide/INDEX.md`
 - `docs/guide/installation.md`
@@ -152,7 +156,7 @@ transcendence-memory frontend smoke
 - `docs/examples/env.snippet`
 - `docs/examples/load_rag_config.sh`
 
-## 验证基线 / Verification Baseline
+## Verification Baseline
 
 Treat rollout as incomplete until the target environment passes:
 1. `GET /health`
