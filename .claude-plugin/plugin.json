@@ -1,6 +1,6 @@
 {
   "name": "transcendence-memory",
-  "description": "Long-term memory skill for AI coding agents — self-hosted RAG backend with semantic search, multimodal document ingestion, and knowledge graph queries. Works with Claude Code, OpenClaw, Codex CLI, and any AgentSkills-compatible platform.",
+  "description": "Long-term memory for AI coding agents. Self-hosted, multi-modal, works across sessions. Connect to your own memory backend for semantic search, persistent recall, and knowledge graph queries.",
   "version": "0.2.0",
   "author": {
     "name": "leekkk2"
