@@ -2,6 +2,8 @@
 
 > **Long-term memory for AI coding agents. Self-hosted, multi-modal, works across sessions.**
 
+[Chinese Documentation](README.zh-CN.md)
+
 Transcendence Memory is an agent skill that gives any AI coding CLI persistent memory — search past decisions, store key insights, and query a knowledge graph built from your documents.
 
 ## Why
@@ -14,20 +16,20 @@ AI conversations are ephemeral. This skill lets your agent:
 
 ## Install
 
-一行安装：
+One-line install:
 
 ```bash
 npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory
 ```
 
-或在 Claude Code 会话内使用插件市场：
+Or use the plugin marketplace inside a Claude Code session:
 
 ```
 /plugin marketplace add leekkk2/transcendence-memory
 /plugin install transcendence-memory
 ```
 
-安装后重启会话，`/tm` 命令即可使用。
+Restart the session after installation, then use the `/tm` command.
 
 ## Quick Start
 
