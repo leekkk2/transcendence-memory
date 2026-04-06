@@ -126,7 +126,7 @@ api_key = "sk-xxx"                       # API 密钥
 | LLM | gemini-2.5-flash | `/query` 生成答案 |
 | VLM | qwen3-vl-plus | 图片/PDF 视觉理解 |
 
-所有模型通过统一 endpoint（如 `https://newapi.zweiteng.tk/v1`）调用。如需调整模型配置，联系后端管理员。
+所有模型通过统一 endpoint（如 `https://api.openai.com/v1` 或兼容 API）调用。如需调整模型配置，修改服务端 `.env` 中对应的 `*_BASE_URL` 变量。
 
 ### 安全说明
 
