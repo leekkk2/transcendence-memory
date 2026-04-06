@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "./hooks/session-start"
+      }
+    ],
+    "postToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "echo \"$TOOL_INPUT\" | grep -qE 'git\\s+(commit|merge|cherry-pick|rebase)' && [ -f \"$HOME/.transcendence-memory/auto-memory.enabled\" ] && [ -f \"$HOME/.transcendence-memory/config.toml\" ] && ./hooks/post-commit-memory || true"
+      }
+    ]
+  }
+}

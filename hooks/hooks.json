@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"$TOOL_INPUT\" | grep -qE 'git\\s+(commit|merge|cherry-pick|rebase)' && [ -f \"$HOME/.transcendence-memory/auto-memory.enabled\" ] && [ -f \"$HOME/.transcendence-memory/config.toml\" ] && \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" post-commit-memory || true"
+          }
+        ]
+      }
+    ]
+  }
+}
