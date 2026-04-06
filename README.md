@@ -1,58 +1,119 @@
-# 🔌 Transcendence Memory Skill
+# Transcendence Memory
 
-> **Empowering AI Agents with Long-Term Memory.**
+> **Long-term memory for AI coding agents. Self-hosted, multi-modal, works across sessions.**
 
-Transcendence Memory Skill 是连接 AI Agent (如 Claude, Gemini) 与 [transcendence-memory-server](../transcendence-memory-server/README.md) 的核心桥梁。它为 Agent 注入了“记住过去”和“找回上下文”的能力，解决长任务、跨会话中的“记忆碎片”问题。
+Transcendence Memory is an agent skill that gives any AI coding CLI persistent memory — search past decisions, store key insights, and query a knowledge graph built from your documents.
 
----
+## Why
 
-## 🌟 为什么需要它？
+AI conversations are ephemeral. This skill lets your agent:
+- **Remember** — persist decisions, lessons learned, and context across sessions
+- **Recall** — semantic search to recover past state in new conversations
+- **Reason** — multimodal RAG queries over PDFs, images, and code with LLM-generated answers
+- **Reuse** — cross-project knowledge sharing via container isolation
 
-普通的 AI 会话是易失的。本技能允许 Agent：
-1. **记忆写回 (Write-back)**: 在任务结束或产生决策时，自动将关键信息持久化。
-2. **状态恢复 (State Recovery)**: 在新会话开始时，通过检索快速同步上一个 Agent 的进度。
-3. **跨项目索引**: 在 A 项目中产生的经验，可以被 B 项目的 Agent 检索利用。
+## Compatibility
 
----
+Works with any AI coding CLI that supports the AgentSkills `SKILL.md` format:
 
-## 🛠️ 安装与配置
+| Platform | Install |
+|----------|---------|
+| **Claude Code** | `/install-skill https://github.com/leekkk2/transcendence-memory` |
+| **OpenClaw** | `claw skill install transcendence-memory` |
+| **Codex CLI** | Copy to `~/.codex/skills/transcendence-memory/` |
+| **Any Agent** | Load `SKILL.md` as system instructions |
 
-### 1. 安装技能
+## Quick Start
+
+### 1. Deploy the backend
+
+You need a running [transcendence-memory-server](https://github.com/leekkk2/transcendence-memory-server):
+
 ```bash
-# Claude Code 用户
-/plugin install transcendence-memory
+git clone https://github.com/leekkk2/transcendence-memory-server.git
+cd transcendence-memory-server
+cp .env.example .env   # edit with your API keys
+docker compose up -d --build
 ```
 
-### 2. 连接服务端
-安装后，直接在聊天框输入“初始化记忆连接”，Agent 会引导你输入从 [transcendence-memory-server](../transcendence-memory-server/README.md) 获取的 **Connection Token**。
+### 2. Connect
 
----
+Get a connection token from the server, then tell your agent:
 
-## 🗣️ Agent 指令集 (示例)
+```
+/tm connect eyJlbmRwb2ludCI6Imh0dHBz...
+```
 
-当你激活本技能后，可以尝试以下指令：
+Or connect manually:
 
-- **“搜索关于 X 项目的最新架构决策”**: Agent 会调用底层 RAG 引擎进行语义搜索。
-- **“记住这次部署失败的原因是端口冲突”**: Agent 会将此作为 `typed_object` 写入服务端。
-- **“帮我生成任务交接总结并存入记忆”**: 自动提取当前任务状态并持久化。
-- **“同步当前的 Container 索引”**: 强制触发服务端索引更新。
+```
+/tm connect --manual
+```
 
----
+The agent will write `~/.transcendence-memory/config.toml` with your endpoint, API key, and container name.
 
-## 🏗️ 架构说明
+### 3. Use
 
-本技能不存储任何本地数据，它是 [transcendence-memory-server](../transcendence-memory-server/README.md) 的无状态前端。
-- **入口**: `skills/transcendence-memory/SKILL.md` (定义了 Agent 可理解的行为逻辑)。
-- **配置**: 持久化在本地的 `config.toml`，仅包含 Endpoint 和 Token。
+```
+/tm search what was the database migration strategy
+/tm remember port 5432 conflicts with local postgres, use 5433
+/tm query summarize the authentication architecture
+/tm upload ./design-doc.pdf
+/tm status
+```
 
----
+## Built-in Commands
 
-## 🔗 关联资源
+| Command | Description |
+|---------|-------------|
+| `/tm connect <token>` | Import connection token |
+| `/tm connect --manual` | Manual endpoint/key/container setup |
+| `/tm status` | Check connection and server health |
+| `/tm search <query>` | Semantic memory search |
+| `/tm remember <text>` | Quick-store a memory |
+| `/tm embed` | Rebuild search index |
+| `/tm query <question>` | Multimodal RAG query (LLM answer) |
+| `/tm upload <file>` | Upload PDF/image/MD to knowledge graph |
+| `/tm containers` | List all containers |
+| `/tm batch <file.jsonl>` | Bulk import memories |
 
-- **服务端仓库**: [transcendence-memory-server](../transcendence-memory-server/README.md) —— 负责向量存储、RAG 计算和数据检索。
-- **技能参考手册**: [Reference Docs](skills/transcendence-memory/references/api-reference.md)
+## Architecture
 
----
+```
+Your Agent + this skill
+    |
+    | HTTPS + API Key
+    v
+transcendence-memory-server
+    |-- LanceDB vector search (text memories)
+    |-- LightRAG knowledge graph (entity/relation extraction)
+    └-- RAG-Anything (PDF/image/table multimodal parsing)
+```
+
+This skill is a **stateless client** — all data lives on your server. The skill provides the agent with instructions and curl templates to interact with the API.
+
+## Project Structure
+
+```
+skills/transcendence-memory/
+  SKILL.md                    # Main skill entry (agent reads this)
+  references/
+    setup.md                  # First-time configuration guide
+    api-reference.md          # Complete API reference
+    ARCHITECTURE.md           # System architecture
+    OPERATIONS.md             # Verification checklist
+    troubleshooting.md        # Diagnostic guide
+    templates/
+      config.toml.template    # Config file template
+  scripts/
+    batch-ingest.py           # Batch import (zero deps, Python stdlib)
+```
+
+## Related
+
+- **Server**: [transcendence-memory-server](https://github.com/leekkk2/transcendence-memory-server) — the backend that stores, indexes, and retrieves memories
+- **API Docs**: Auto-generated at `http://your-server:8711/docs` (FastAPI Swagger UI)
 
 ## License
+
 MIT
