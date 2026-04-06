@@ -1,8 +1,16 @@
 {
+  "version": 1,
+  "name": "transcendence-memory",
+  "description": "Long-term memory for AI coding agents — semantic search, multimodal RAG, knowledge graph",
+  "owner": {
+    "name": "leekkk2"
+  },
   "plugins": [
     {
       "name": "transcendence-memory",
-      "source": "./"
+      "description": "Self-hosted persistent memory with semantic search, RAG queries, and document upload",
+      "version": "0.2.0",
+      "source": "."
     }
   ]
 }
