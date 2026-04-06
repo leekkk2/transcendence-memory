@@ -84,6 +84,40 @@ The agent will write `~/.transcendence-memory/config.toml` with your endpoint, A
 | `/tm upload <file>` | Upload PDF/image/MD to knowledge graph |
 | `/tm containers` | List all containers |
 | `/tm batch <file.jsonl>` | Bulk import memories |
+| `/tm auto on` | Enable automatic memory on git commits |
+| `/tm auto off` | Disable automatic memory |
+| `/tm auto status` | Show auto-memory configuration |
+
+## Automatic Memory
+
+When enabled, transcendence-memory automatically stores a one-line summary after every git commit. This is powered by lifecycle hooks that integrate with the host AI coding CLI.
+
+```
+/tm auto on       # enable
+/tm auto off      # disable
+/tm auto status   # check
+```
+
+Each auto-commit memory is tagged `auto-commit` and follows this format:
+
+```
+[commit abc1234] fix: resolve port conflict | files: M docker-compose.yml, M .env.example
+```
+
+### Supported platforms
+
+| Platform | Hook mechanism | Status |
+|----------|---------------|--------|
+| Claude Code | `hooks/hooks.json` (SessionStart + PostToolUse) | Supported |
+| Cursor | `hooks/hooks-cursor.json` (camelCase events) | Supported |
+| Copilot CLI | Claude Code compatible | Supported |
+| Augment Code | Claude Code compatible | Supported |
+| Gemini CLI | `hooks/adapter.py` (AfterTool) | Adapter ready |
+| Windsurf | `hooks/adapter.py` (post-tool-use) | Adapter ready |
+| Vibe CLI | `hooks/adapter.py` (post-tool-call) | Adapter ready |
+| Cline / Roo Code | `hooks/adapter.py` (JSON stdin/stdout) | Adapter ready |
+
+The `hooks/adapter.py` normalizes input from all platforms into a unified format. For platforms without native hook support, add transcendence-memory instructions to the platform's rules file.
 
 ## Architecture
 
@@ -115,6 +149,14 @@ skills/transcendence-memory/
       config.toml.template    # Config file template
   scripts/
     batch-ingest.py           # Batch import (zero deps, Python stdlib)
+hooks/
+  hooks.json                  # Claude Code hook config
+  hooks-cursor.json           # Cursor hook config
+  run-hook.cmd                # Cross-platform polyglot wrapper
+  session-start               # SessionStart handler
+  post-commit-memory          # PostToolUse handler (git commit)
+  auto-memory-prompt.md       # Agent instructions for auto-memory
+  adapter.py                  # Multi-platform hook adapter
 ```
 
 ## Related

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# PostToolUse hook for transcendence-memory plugin
+# Auto-stores a memory after git commit/merge/cherry-pick/rebase.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONFIG_DIR="$HOME/.transcendence-memory"
+CONFIG_FILE="$CONFIG_DIR/config.toml"
+AUTO_MEMORY_MARKER="$CONFIG_DIR/auto-memory.enabled"
+PROMPT_FILE="${PLUGIN_ROOT}/hooks/auto-memory-prompt.md"
+
+# Guard: both config and auto-memory must exist
+[ -f "$CONFIG_FILE" ] || exit 0
+[ -f "$AUTO_MEMORY_MARKER" ] || exit 0
+
+# Read the auto-memory prompt
+if [ -f "$PROMPT_FILE" ]; then
+    prompt_content=$(cat "$PROMPT_FILE")
+else
+    prompt_content="[transcendence-memory] A git commit was detected. Auto-store a memory with the commit message and changed files summary using /tm remember. Do not ask the user for confirmation."
+fi
+
+# Escape for JSON
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+escaped=$(escape_for_json "$prompt_content")
+
+# Output for the correct platform
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "PostToolUse",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
+else
+    printf '{\n  "additionalContext": "%s"\n}\n' "$escaped"
+fi
+
+exit 0
