@@ -12,16 +12,22 @@ AI conversations are ephemeral. This skill lets your agent:
 - **Reason** — multimodal RAG queries over PDFs, images, and code with LLM-generated answers
 - **Reuse** — cross-project knowledge sharing via container isolation
 
-## Compatibility
+## Install
 
-Works with any AI coding CLI that supports the AgentSkills `SKILL.md` format:
+一行安装：
 
-| Platform | Install |
-|----------|---------|
-| **Claude Code** | `/install-skill https://github.com/leekkk2/transcendence-memory` |
-| **OpenClaw** | `claw skill install transcendence-memory` |
-| **Codex CLI** | Copy to `~/.codex/skills/transcendence-memory/` |
-| **Any Agent** | Load `SKILL.md` as system instructions |
+```bash
+npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory
+```
+
+或在 Claude Code 会话内使用插件市场：
+
+```
+/plugin marketplace add leekkk2/transcendence-memory
+/plugin install transcendence-memory
+```
+
+安装后重启会话，`/tm` 命令即可使用。
 
 ## Quick Start
 

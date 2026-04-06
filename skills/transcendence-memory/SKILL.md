@@ -16,16 +16,18 @@ argument-hint: "[command] [args...]"
 - **容器管理**：列出、删除容器
 - **排障**：诊断连接和检索问题
 
-## Compatibility
+## Install
 
-本技能遵循 AgentSkills 规范，兼容以下 AI coding CLI：
+```bash
+npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory
+```
 
-| 平台 | 安装方式 |
-|------|---------|
-| Claude Code | `/install-skill https://github.com/leekkk2/transcendence-memory` |
-| OpenClaw | `claw skill install transcendence-memory` |
-| Codex CLI | 复制到 `~/.codex/skills/transcendence-memory/` |
-| 其他 Agent | 将 SKILL.md 作为系统指令加载 |
+或在 Claude Code 会话内：
+
+```
+/plugin marketplace add leekkk2/transcendence-memory
+/plugin install transcendence-memory
+```
 
 ## Principles
 
