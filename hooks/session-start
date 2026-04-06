@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# SessionStart hook for transcendence-memory plugin
+# Checks connection status and prompts for setup or auto-memory enablement.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONFIG_DIR="$HOME/.transcendence-memory"
+CONFIG_FILE="$CONFIG_DIR/config.toml"
+AUTO_MEMORY_MARKER="$CONFIG_DIR/auto-memory.enabled"
+
+# --- Helper: escape string for JSON embedding ---
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+# --- Helper: output context for the correct platform ---
+emit_context() {
+    local context="$1"
+    local escaped
+    escaped=$(escape_for_json "$context")
+
+    if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+        printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
+    elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+        printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
+    else
+        printf '{\n  "additionalContext": "%s"\n}\n' "$escaped"
+    fi
+}
+
+# --- Build context message ---
+context=""
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    # Not configured — prompt for setup
+    context="[transcendence-memory] Not configured yet. The user has the transcendence-memory skill installed but has not connected to a backend server.
+
+If the user wants to set up persistent memory, guide them through:
+1. Deploy transcendence-memory-server (see https://github.com/leekkk2/transcendence-memory-server)
+2. Get a connection token from the server
+3. Run: /tm connect <token>
+
+Do NOT bring this up unprompted unless the user mentions memory, recall, or context persistence."
+else
+    # Configured — read connection info
+    ENDPOINT=$(grep '^endpoint' "$CONFIG_FILE" 2>/dev/null | sed 's/.*= *"//' | sed 's/".*//' || echo "")
+    CONTAINER=$(grep '^container' "$CONFIG_FILE" 2>/dev/null | sed 's/.*= *"//' | sed 's/".*//' || echo "")
+
+    if [ -n "$ENDPOINT" ]; then
+        # Quick health check (timeout 3s, silent failure)
+        health=$(curl -sS --connect-timeout 3 --max-time 5 "$ENDPOINT/health" 2>/dev/null || echo "unreachable")
+
+        if echo "$health" | grep -q '"status"'; then
+            context="[transcendence-memory] Connected to ${ENDPOINT} (container: ${CONTAINER}). Server is healthy.
+
+Available commands: /tm search, /tm remember, /tm query, /tm upload, /tm status, /tm embed, /tm containers, /tm batch"
+        else
+            context="[transcendence-memory] Connected to ${ENDPOINT} (container: ${CONTAINER}), but server health check failed (${health}).
+
+The user may need to check server status. Available: /tm status for diagnostics."
+        fi
+    else
+        context="[transcendence-memory] Config file exists but endpoint is missing. Run /tm connect --manual to reconfigure."
+    fi
+
+    # Check auto-memory status
+    if [ ! -f "$AUTO_MEMORY_MARKER" ]; then
+        context="${context}
+
+[transcendence-memory] Automatic memory is not enabled. The user can enable it with /tm auto on to automatically remember git commit summaries. Do NOT suggest this unless the user asks about automation or memory management."
+    else
+        context="${context}
+
+[transcendence-memory] Automatic memory is enabled. Git commit summaries will be auto-stored. The user can disable with /tm auto off."
+    fi
+fi
+
+emit_context "$context"
+exit 0
