@@ -3,17 +3,22 @@
 setlocal enabledelayedexpansion
 set "HOOK_NAME=%~1"
 set "SCRIPT_DIR=%~dp0"
-if exist "C:\Program Files\Git\bin\bash.exe" (
-    "C:\Program Files\Git\bin\bash.exe" "%SCRIPT_DIR%%HOOK_NAME%" %*
-    exit /b %errorlevel%
-)
-if exist "C:\Program Files (x86)\Git\bin\bash.exe" (
-    "C:\Program Files (x86)\Git\bin\bash.exe" "%SCRIPT_DIR%%HOOK_NAME%" %*
-    exit /b %errorlevel%
-)
+rem 动态查找 bash，不使用硬编码路径
 where bash >nul 2>nul && (
     bash "%SCRIPT_DIR%%HOOK_NAME%" %*
     exit /b %errorlevel%
+)
+rem 回退：通过 Git 安装目录动态定位 bash
+for /f "tokens=*" %%G in ('where git 2^>nul') do (
+    set "GIT_PATH=%%~dpG"
+    if exist "!GIT_PATH!bash.exe" (
+        "!GIT_PATH!bash.exe" "%SCRIPT_DIR%%HOOK_NAME%" %*
+        exit /b %errorlevel%
+    )
+    if exist "!GIT_PATH!..\bin\bash.exe" (
+        "!GIT_PATH!..\bin\bash.exe" "%SCRIPT_DIR%%HOOK_NAME%" %*
+        exit /b %errorlevel%
+    )
 )
 exit /b 0
 CMDBLOCK
