@@ -28,27 +28,29 @@ RETRY_DELAY = 2  # 秒
 
 
 def send_batch(endpoint: str, api_key: str, container: str,
-               objects: list[dict], retry: int = 0) -> dict:
+               objects: list[dict]) -> dict:
     url = f"{endpoint}/ingest-memory/objects"
     payload = json.dumps({"container": container, "objects": objects, "auto_embed": False}).encode()
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "X-API-KEY": api_key,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read())
-    except (urllib.error.URLError, TimeoutError) as e:
-        if retry < MAX_RETRIES:
-            print(f"  重试 {retry + 1}/{MAX_RETRIES}（{e}）")
-            time.sleep(RETRY_DELAY * (retry + 1))
-            return send_batch(endpoint, api_key, container, objects, retry + 1)
-        raise
+    last_error = None
+    for attempt in range(MAX_RETRIES + 1):
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-API-KEY": api_key,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.loads(resp.read())
+        except (urllib.error.URLError, TimeoutError) as e:
+            last_error = e
+            if attempt < MAX_RETRIES:
+                print(f"  重试 {attempt + 1}/{MAX_RETRIES}（{e}）")
+                time.sleep(RETRY_DELAY * (attempt + 1))
+    raise last_error  # type: ignore[misc]
 
 
 def main() -> None:

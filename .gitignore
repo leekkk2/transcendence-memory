@@ -1,4 +1,33 @@
+# Python
 .venv/
 .pytest_cache/
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+
+# Runtime and data
+data/
+*.log
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node (if used by skills.sh tooling)
+node_modules/
+package-lock.json
