@@ -179,15 +179,21 @@ def action_post_commit(info):
     }
 
     try:
-        subprocess.run(
-            [
-                "curl", "-sS", "-X", "POST", f"{endpoint}/ingest-memory/objects",
-                "-H", f"X-API-KEY: {api_key}",
-                "-H", "Content-Type: application/json",
-                "-d", json.dumps(payload),
-            ],
-            capture_output=True, timeout=10,
+        payload_json = json.dumps(payload)
+        # 使用 stdin 传递请求体，通过 -H @- 无法避免头部在 ps 中可见，
+        # 改用 Python 标准库 urllib 避免凭证暴露在进程列表中
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            f"{endpoint}/ingest-memory/objects",
+            data=payload_json.encode("utf-8"),
+            headers={
+                "X-API-KEY": api_key,
+                "Content-Type": "application/json",
+            },
+            method="POST",
         )
+        urllib.request.urlopen(req, timeout=10)
     except Exception:
         pass  # hooks should fail silently
 
