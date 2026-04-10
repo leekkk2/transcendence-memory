@@ -147,8 +147,21 @@ curl -sS -X POST "${ENDPOINT}/documents/upload" \
 Bulk ingest memories with the bundled script:
 ```bash
 python3 <skill-path>/scripts/batch-ingest.py \
-  "${ENDPOINT}" "${API_KEY}" "${CONTAINER}" "$1"
+  "${ENDPOINT}" "${API_KEY}" "${CONTAINER}" "$1" [options]
 ```
+
+Supported options:
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `--max-bytes N` | 512000 | 单批最大字节数 |
+| `--batch-size N` | 50 | 单批最大条数 |
+| `--redact` | off | 入库前对常见敏感信息脱敏（API key、token、私钥等） |
+| `--probe` | off | 入库前先探测 `/ingest-memory/contract` 确认接口 schema |
+| `--resume` | off | 基于进度文件跳过已成功的行（断点续传） |
+| `--failed-log F` | `<input>.failed.jsonl` | 失败对象写入指定文件 |
+
+The script uses WAF-compatible request headers, auto-splits batches on HTTP 413, and logs failed objects for retry.
 
 ## Quick Reference (for configured users)
 
@@ -297,20 +310,19 @@ Common quick checks:
 
 ### Bulk Ingest (large memory sets)
 
-When you need to ingest dozens to hundreds of memories:
+When you need to ingest dozens to thousands of memories:
 
 ```bash
-# Prepare a JSONL file, one JSON object per line
-# {"id":"mem-001","text":"memory content","tags":["tag1"]}
-# {"id":"mem-002","text":"another memory","source":"telegram"}
-
+# 基本用法
 /tm batch memories.jsonl
-# Or call the script directly:
+
+# 大规模入库推荐：探测 contract + 脱敏 + 断点续传
 python3 <skill-path>/scripts/batch-ingest.py \
-  "${ENDPOINT}" "${API_KEY}" "${CONTAINER}" memories.jsonl
+  "${ENDPOINT}" "${API_KEY}" "${CONTAINER}" memories.jsonl \
+  --probe --redact --resume --max-bytes 500000
 ```
 
-The script automatically batches input in groups of 50, retries failed requests, and prints progress output. It has zero external dependencies and uses only the Python standard library.
+The script batches by both count and byte size, uses WAF-compatible headers, auto-splits on 413, supports secrets redaction, contract probing, resume, and failed-object logging. Zero external dependencies.
 
 ### Async Tasks
 
@@ -331,7 +343,8 @@ curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}"
 | Scenario | Recommended approach |
 |------|---------|
 | Health checks, single searches, or a few memory writes | Built-in `/tm` commands |
-| Bulk ingest of dozens to hundreds of memories | `/tm batch file.jsonl` |
+| Bulk ingest of dozens to thousands of memories | `/tm batch file.jsonl --probe --redact` |
+| Large-scale ingest with sensitive content | Add `--redact --resume --failed-log` |
 | Rebuilding a large container index | `/tm embed` or async mode |
 | Adding documents to the knowledge graph | `/tm upload file.pdf` or `/documents/text` |
 | Asking for an LLM-synthesized answer | `/tm query your question` |
