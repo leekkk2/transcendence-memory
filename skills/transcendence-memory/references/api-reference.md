@@ -62,7 +62,6 @@ curl -sS -X POST "${ENDPOINT}/embed" \
 | `timeout_s` | int | 否 | 超时秒数（默认 600，大容器可设更高） |
 
 > **注意**：默认 timeout 为 600 秒。50+ 条记忆的容器 embed 可能需要数分钟。如仍超时，增大 `timeout_s` 或使用 `background: true` 异步模式。
-| `timeout_s` | int | 否 | 超时秒数 |
 
 ### POST /ingest-memory/objects
 
@@ -100,11 +99,13 @@ curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
 
 ### GET /ingest-memory/contract
 
-查看当前 ingest 语义边界。无需认证。
+查看当前 ingest 语义边界（接受的字段、类型约束）。无需认证。**建议在大规模批量导入前先调用此端点确认 schema。**
 
 ```bash
 curl -sS "${ENDPOINT}/ingest-memory/contract"
 ```
+
+> **最佳实践**：批量导入前先探测 contract 确认字段约束，避免 422。使用 `batch-ingest.py --probe` 可自动完成。
 
 ### POST /ingest-structured
 
@@ -155,8 +156,6 @@ curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}/memories/mem-001" \
 ```json
 {"status": "deleted", "id": "mem-001", "container": "imac"}
 ```
-
----
 
 ## 多模态路径（RAG-Anything pipeline）
 
@@ -288,8 +287,6 @@ curl -sS "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
 ```
 
 状态值：`running` | `completed` | `failed`
-
----
 
 ## 读取配置的辅助方法
 

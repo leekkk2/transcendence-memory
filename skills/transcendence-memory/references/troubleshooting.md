@@ -39,7 +39,7 @@ curl -sS -o /dev/null -w "%{http_code}" "${ENDPOINT}/health"
 
 → 联系后端管理员确认服务状态。
 
-### 401 / 403
+### 401 Unauthorized
 
 API key 不匹配：
 
@@ -54,6 +54,55 @@ curl -sS -i "${ENDPOINT}/search" \
 ```
 
 → 向后端管理员确认正确的 API key。
+
+### 403 Forbidden（Cloudflare / WAF 拦截）
+
+如果 `curl` 成功但 Python 脚本返回 403，且响应体包含 `error code: 1010` 或 Cloudflare 页面：
+
+**根因**：Python `urllib.request` 的默认 `User-Agent` 被 WAF 识别并拦截。
+
+**解决**：
+- 使用 `batch-ingest.py` v0.2+，已内置 WAF 兼容请求头
+- 或在自定义脚本中显式设置：
+  ```python
+  headers["User-Agent"] = "transcendence-memory-batch/0.2"
+  headers["Accept"] = "application/json, text/plain, */*"
+  ```
+- 确认不是 API key 问题：同一 key 用 `curl` 测试是否成功
+
+### 413 Request Entity Too Large
+
+单次请求体超出网关/反向代理限制（通常来自 nginx）。
+
+**解决**：
+- 使用 `batch-ingest.py --max-bytes 500000` 限制单批字节数
+- 脚本会在遇到 413 时自动对半缩批重试
+- 对超长文件（>100KB），建议先截断或拆分再入库
+- 若反复出现，联系管理员调大 nginx `client_max_body_size`
+
+### 422 Unprocessable Entity
+
+请求体格式不符合 `/ingest-memory/objects` 的 schema 要求。
+
+**排查**：
+1. 先探测接口 contract：
+   ```bash
+   curl -sS "${ENDPOINT}/ingest-memory/contract"
+   ```
+2. 用最小 payload 测试：
+   ```bash
+   curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
+     -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+     -d '{"container":"${CONTAINER}","objects":[{"id":"test","text":"hello"}]}'
+   ```
+3. 逐步加回 `tags`、`metadata` 等字段定位不兼容字段
+4. 使用 `batch-ingest.py --probe` 在批量导入前自动探测
+
+常见原因：
+- `metadata` 字段包含不支持的类型
+- `tags` 非字符串数组
+- `text` 为空
+- 字段名拼写错误
 
 ### 5xx 错误
 
@@ -152,6 +201,28 @@ VLM（视觉语言模型）用于处理图片和 PDF 中的视觉内容。如果
 - VLM 是 server 端配置（默认 qwen3-vl-plus），skill 端无法直接排查
 - 联系后端管理员确认 VLM 模型是否正常工作
 - 纯文本内容不依赖 VLM，如果文本查询正常但图片查询异常，大概率是 VLM 问题
+
+## 批量入库问题
+
+### 批量导入推荐流程
+
+大规模入库前建议按此顺序执行，减少失败率：
+
+1. `curl -sS "${ENDPOINT}/health"` — 确认服务可用
+2. `curl -sS "${ENDPOINT}/ingest-memory/contract"` — 确认接口 schema
+3. 用 1-3 条对象做 dry-run — 确认格式正确
+4. 正式批量导入，建议加 `--probe --redact --resume`
+5. 导入完成后统一 `/embed`
+6. `/search` 验证
+
+### 入库后搜索不到
+
+- 确认已执行 `/embed` 刷新索引
+- embed 大容器可能需要数分钟，使用 `background:true` + `/jobs/{pid}` 监控
+
+### 脱敏不完整
+
+`--redact` 覆盖常见模式（OpenAI/GitHub/AWS/Google/Slack/Telegram token、PEM 私钥、通用 key=value）。对于非标准敏感信息，建议在入库前自行预处理。
 
 ## 重置配置
 

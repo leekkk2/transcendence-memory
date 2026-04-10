@@ -29,7 +29,9 @@ This skill is a **stateless client** — it contains no server code, no database
 - **Hook execution**: Lifecycle hooks execute only well-defined, auditable shell scripts bundled in this repository
 - **Data transmission**: All API calls use HTTPS; credentials are never passed via command-line arguments
 - **Input handling**: User inputs are length-limited and sanitized before use in API calls
+- **Secrets redaction**: The batch ingest script includes built-in regex-based redaction for common sensitive patterns (API keys, tokens, private keys, credentials) when invoked with `--redact`. Patterns cover OpenAI, GitHub, Google, AWS, Slack, Telegram tokens, PEM private keys, and generic key=value credentials
 - **No dynamic code execution**: No `eval()`, `exec()`, `vm.runInNewContext()`, or equivalent mechanisms
+- **No shell injection**: All API calls use `urllib.request` with structured data; no user input is interpolated into shell commands
 
 ## Best Practices for Users
 
@@ -37,6 +39,8 @@ This skill is a **stateless client** — it contains no server code, no database
 - Keep `~/.transcendence-memory/config.toml` with restrictive permissions (`chmod 600`)
 - Do not commit `.env` files or config files containing API keys
 - Review hook scripts before enabling automatic memory (`/tm auto on`)
+- Use `--redact` when batch-ingesting content that may contain secrets (config files, logs, CLI histories)
+- Use `--probe` before large-scale ingestion to validate the API contract
 - Keep the skill updated to the latest version
 
 ## Dependencies
