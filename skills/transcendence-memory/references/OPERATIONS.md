@@ -33,6 +33,36 @@ curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
 # 预期：accepted
 ```
 
+## 批量入库预检
+
+在执行大规模批量导入前，先执行以下探测：
+
+```bash
+# 5a. 探测 ingest contract — 确认接口接受的字段
+curl -sS "${ENDPOINT}/ingest-memory/contract"
+# 预期：200 + 返回 schema 信息
+
+# 5b. 最小 payload 探针 — 确认最基本的写入可行
+curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "{\"container\":\"${CONTAINER}\",\"objects\":[{\"id\":\"probe-test\",\"text\":\"contract probe\"}]}"
+# 预期：accepted: 1
+
+# 5c. 逐步加回可选字段测试（tags / metadata）
+curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "{\"container\":\"${CONTAINER}\",\"objects\":[{\"id\":\"probe-tags\",\"text\":\"test\",\"tags\":[\"probe\"],\"metadata\":{\"source\":\"test\"}}]}"
+# 预期：accepted: 1；若 422 则定位不兼容字段
+
+# 5d. 清理探针数据
+curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}/memories/probe-test" \
+  -H "X-API-KEY: ${API_KEY}"
+curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}/memories/probe-tags" \
+  -H "X-API-KEY: ${API_KEY}"
+```
+
+> 使用 `batch-ingest.py --probe` 可自动完成步骤 5a。
+
 ## 多模态验证流程
 
 在轻量路径验证通过后，执行多模态路径验证：
@@ -111,9 +141,15 @@ curl -sS -X POST "${ENDPOINT}/embed" \
 ### CRUD
 - 写入 → 索引 → 搜索 → 更新 → 删除 → 索引，全链路通过
 
+### 批量入库预检
+- `/ingest-memory/contract` 返回 200
+- 最小 payload 写入成功（无 422）
+- 可选字段（tags/metadata）兼容性已确认
+
 ### 通用规则
 - HTTP 200 但 body 有 error → **不算通过**
 - 任何 5xx → **不算通过**
+- 403 + Cloudflare 页面 → **WAF 拦截，非鉴权失败**
 
 ## Reminder
 
