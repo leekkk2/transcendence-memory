@@ -38,11 +38,47 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | 参数 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `query` | string | 是 | 搜索文本 |
-| `topk` | int | 否 | 返回数量（默认 5） |
-| `container` | string | 是 | 目标容器 |
-| `timeout_s` | int | 否 | 超时秒数（默认 120） |
+| `topk` | int | 否 | 全局返回数量（默认 5），跨容器场景下也是合并后总数 |
+| `container` | string | 否 | 单容器搜索，向后兼容字段（默认 `imac`） |
+| `containers` | string[] | 否 | 显式列出多个容器，优先级最高 |
+| `container_pattern` | string | 否 | 模糊匹配容器名（大小写不敏感），优先级高于 `container` |
+| `pattern_mode` | string | 否 | `substring`（默认）/ `prefix` / `glob` |
+| `timeout_s` | int | 否 | 超时秒数（默认 600） |
 
-**注意**：HTTP 200 不代表成功，需检查 body 是否包含错误。
+跨容器示例：
+
+```bash
+# 模糊匹配 yzjx* 的所有容器
+curl -sS -X POST "${ENDPOINT}/search" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"query":"docker compose","container_pattern":"yzjx","topk":5}'
+
+# 显式列出多个容器
+curl -sS -X POST "${ENDPOINT}/search" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"query":"deploy","containers":["yzjx","yzjx_codex"],"topk":10}'
+```
+
+跨容器响应新增字段：
+
+```json
+{
+  "status": "ok",
+  "container": "yzjx",
+  "containers": ["yzjx", "yzjx_claude", "yzjx_codex"],
+  "per_container_status": {
+    "yzjx": "ok",
+    "yzjx_claude": "ok",
+    "yzjx_codex": "not_initialized"
+  },
+  "results": [
+    {"container": "yzjx", "score": 0.12, "text": "..."},
+    {"container": "yzjx_claude", "score": 0.18, "text": "..."}
+  ]
+}
+```
+
+**注意**：HTTP 200 不代表成功，需检查 body 是否包含错误；跨容器场景下检查 `per_container_status` 来定位部分失败的容器。
 
 ### POST /embed
 
@@ -234,15 +270,37 @@ curl -sS -X POST "${ENDPOINT}/query" \
 
 ### GET /containers
 
-列出所有可用容器。
+列出所有可用容器，支持模糊过滤。
 
 ```bash
+# 全部容器
 curl -sS "${ENDPOINT}/containers" -H "X-API-KEY: ${API_KEY}"
+
+# 模糊匹配（大小写不敏感子串）
+curl -sS "${ENDPOINT}/containers?pattern=yzjx" -H "X-API-KEY: ${API_KEY}"
+
+# 前缀匹配
+curl -sS "${ENDPOINT}/containers?pattern=yzjx&mode=prefix" -H "X-API-KEY: ${API_KEY}"
+
+# glob 模式
+curl -sS "${ENDPOINT}/containers?pattern=yzjx_*&mode=glob" -H "X-API-KEY: ${API_KEY}"
 ```
+
+| 参数 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `pattern` | string | 否 | 匹配字符串（最长 64，禁止 `/` 与控制字符） |
+| `mode` | string | 否 | `substring`（默认）/ `prefix` / `glob` |
 
 响应示例：
 ```json
-{"containers": ["imac", "work", "lab"]}
+{
+  "containers": [
+    {"name": "yzjx", "objects": 3237, "indexed": true, "last_modified": "2026-04-09T10:00:00Z"},
+    {"name": "yzjx_claude", "objects": 69, "indexed": true, "last_modified": "2026-04-10T08:30:00Z"},
+    {"name": "yzjx_codex", "objects": 1, "indexed": false, "last_modified": "2026-04-11T12:00:00Z"}
+  ],
+  "count": 3
+}
 ```
 
 ### DELETE /containers/{name}
