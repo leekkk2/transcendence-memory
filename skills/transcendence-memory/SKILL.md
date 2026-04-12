@@ -45,11 +45,14 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `connect --manual` | Enter endpoint, api_key, and container manually | `/tm connect --manual` |
 | `status` | Check connection status and server health | `/tm status` |
 | `search <query>` | Run semantic search over memories | `/tm search architecture decision from the last deployment` |
+| `search --match <pattern> <query>` | Search across all containers whose name fuzzy-matches `<pattern>` | `/tm search --match yzjx docker compose` |
+| `search --all <query>` | Search across **every** container at once | `/tm search --all release notes` |
 | `remember <text>` | Store one memory quickly | `/tm remember Port conflicts caused the deployment failure` |
+| `update <id> <text>` | Update an existing memory's text in the current container | `/tm update mem-001 New corrected content` |
 | `embed` | Rebuild the index for the current container | `/tm embed` |
 | `query <question>` | Run a multimodal RAG query and get an LLM-generated answer | `/tm query What is the overall project architecture?` |
 | `upload <file>` | Upload a file into the knowledge graph | `/tm upload ./design.pdf` |
-| `containers` | List all containers | `/tm containers` |
+| `containers [pattern]` | List containers, optionally filtered by a fuzzy pattern | `/tm containers yzjx` |
 | `batch <file.jsonl>` | Bulk import memories | `/tm batch memories.jsonl` |
 | `auto on` | Enable automatic memory on git commits | `/tm auto on` |
 | `auto off` | Disable automatic memory | `/tm auto off` |
@@ -107,11 +110,30 @@ curl -sS -X POST "$ENDPOINT/search" \
 
 ### Command: `search`
 
+Single-container (default):
 ```bash
 curl -sS -X POST "${ENDPOINT}/search" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
   -d "{\"container\":\"${CONTAINER}\",\"query\":\"$ARGUMENTS\",\"topk\":5}"
 ```
+
+Fuzzy multi-container — `--match <pattern> <query>`:
+```bash
+PATTERN="$1"; shift; QUERY="$*"
+curl -sS -X POST "${ENDPOINT}/search" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "{\"container_pattern\":\"${PATTERN}\",\"query\":\"${QUERY}\",\"topk\":5}"
+```
+
+All containers — `--all <query>`:
+```bash
+QUERY="$*"
+curl -sS -X POST "${ENDPOINT}/search" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "{\"container_pattern\":\"\",\"query\":\"${QUERY}\",\"topk\":10}"
+```
+
+> 跨容器响应里每条 hit 会带 `container` 字段，并附 `containers` / `per_container_status` 用于诊断。`topk` 是合并后的全局上限，不是每容器独立。
 
 ### Command: `remember`
 
@@ -122,6 +144,35 @@ curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
   -d "{\"container\":\"${CONTAINER}\",\"objects\":[{\"id\":\"${MEM_ID}\",\"text\":\"$ARGUMENTS\",\"tags\":[]}],\"auto_embed\":true}"
 ```
+
+### Command: `update`
+
+更新当前容器内某条记忆的文本（最常用的字段）。更新后必须执行 `/tm embed` 刷新索引。
+
+```bash
+MEM_ID="$1"; shift; NEW_TEXT="$*"
+curl -sS -X PUT "${ENDPOINT}/containers/${CONTAINER}/memories/${MEM_ID}" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "${NEW_TEXT}")"
+echo "提示：执行 /tm embed 以刷新索引。"
+```
+
+> 需要同时更新 `title` / `tags` / `metadata` 时，直接走 Quick Reference 中的 PUT 调用即可。
+
+### Command: `containers`
+
+列出当前 endpoint 下的容器，可选模糊过滤：
+
+```bash
+PATTERN="${1:-}"
+URL="${ENDPOINT}/containers"
+[ -n "$PATTERN" ] && URL="${URL}?pattern=${PATTERN}"
+curl -sS "$URL" -H "X-API-KEY: ${API_KEY}"
+```
+
+示例：
+- `/tm containers` — 列出全部
+- `/tm containers yzjx` — 列出名字里包含 `yzjx` 的容器（大小写不敏感）
 
 ### Command: `query`
 
@@ -220,6 +271,9 @@ curl -sS -X POST "${ENDPOINT}/query" \
 ```bash
 # List all containers
 curl -sS "${ENDPOINT}/containers" -H "X-API-KEY: ${API_KEY}"
+
+# Fuzzy filter by name (case-insensitive substring; mode also supports prefix / glob)
+curl -sS "${ENDPOINT}/containers?pattern=yzjx" -H "X-API-KEY: ${API_KEY}"
 
 # Delete a container
 curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}" \
