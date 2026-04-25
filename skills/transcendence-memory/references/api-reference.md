@@ -98,6 +98,13 @@ curl -sS -X POST "${ENDPOINT}/embed" \
 | `timeout_s` | int | 否 | 超时秒数（默认 600，大容器可设更高） |
 
 > **注意**：默认 timeout 为 600 秒。50+ 条记忆的容器 embed 可能需要数分钟。如仍超时，增大 `timeout_s` 或使用 `background: true` 异步模式。
+>
+> **大容器实战建议**（数千条 chunks）：同步 `wait=true` 模式下 curl 长时间无输出常被误判为失败,**强烈建议改用 `background: true`**,从响应中拿 `pid`,再用 `/jobs/{pid}` 轮询 `running` 字段。短小容器（< 100 chunks）同步模式也可,通常 5–30 秒返回。
+
+异步模式响应：
+```json
+{"command": ["python3", "..."], "background": true, "wait": false, "pid": 206287, "status": "started", "note": "Background ingest started."}
+```
 
 ### POST /ingest-memory/objects
 
@@ -213,8 +220,12 @@ curl -sS -X POST "${ENDPOINT}/documents/text" \
 
 响应示例：
 ```json
-{"status": "accepted", "container": "imac", "message": "Text document ingested"}
+{"status": "ok", "container": "imac", "answer": "Text ingested into container imac knowledge graph.", "mode": "insert"}
 ```
+
+> **重要异步行为**：HTTP 200 仅代表"已接收",真正的知识图谱构建（实体抽取 + 关系推断 + LLM 索引）在后台执行,通常需要 **20–60 秒**才能被 `/query` 召回。短文档（< 5KB）多数 30 秒内可用,长文档可能需要数分钟。如刚 ingest 后 `/query` 返回"无信息",**先等再重试**,不要怀疑数据未写入。
+>
+> **与 `/ingest-memory/objects` 的区别**：本端点写入 RAG-Anything 知识图谱,服务于 `/query`;`/ingest-memory/objects` 写入 LanceDB 向量索引,服务于 `/search`。**两条路径互不相通**——同一份内容如果想被两个端点都召回,需要分别入库。详见 `references/best-practices.md`。
 
 ### POST /documents/upload
 
@@ -333,18 +344,37 @@ curl -sS "${ENDPOINT}/export-connection-token?container=${CONTAINER}" \
 
 ### GET /jobs/{pid}
 
-查询异步任务状态（如文档上传处理进度）。
+查询异步任务状态（如 `/embed?background=true` 或 `/documents/upload` 的进度）。
 
 ```bash
 curl -sS "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
 ```
 
-响应示例：
+响应示例（运行中）：
 ```json
-{"pid": 12345, "status": "running", "progress": "Processing page 3/10"}
+{"pid": 12345, "running": true, "exit_code": null, "message": "Process 12345 is running."}
 ```
 
-状态值：`running` | `completed` | `failed`
+响应示例（已完成）：
+```json
+{"pid": 12345, "running": false, "exit_code": 0, "message": "Process 12345 finished with exit code 0."}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pid` | int | 后台进程 PID |
+| `running` | bool | 是否仍在运行 |
+| `exit_code` | int \| null | 退出码,running=true 时为 null;0 表示成功,非 0 表示失败 |
+| `message` | string | 人类可读的状态描述 |
+
+**判定方式**：通过 `running` 字段判断,而非 `status`。完成后再用 `exit_code` 判定成败。
+
+```bash
+# 正确轮询示例
+until ! curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}" | python3 -c "import json,sys; sys.exit(0 if json.load(sys.stdin).get('running') else 1)"; do
+  sleep 5
+done
+```
 
 ## 读取配置的辅助方法
 
