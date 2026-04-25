@@ -34,6 +34,7 @@ Or inside a Claude Code session:
 - **Keep builtin memory**: server-side memory augments the agent's builtin memory instead of replacing it
 - **Zero dependency**: no extra package installation is required; the agent can do everything with native tools such as curl, file I/O, and the Python standard library
 - **Progressive loading**: read `references/setup.md` during first-time setup, then this file is enough for day-to-day use
+- **Two paths, no auto-bridge**: `/ingest-memory/objects` writes to LanceDB (served by `/search`); `/documents/text` and `/documents/upload` write to the RAG-Anything knowledge graph (served by `/query`). Data ingested through one path is **not** auto-promoted to the other. When you need both `/search` snippets and `/query` synthesis, you must dual-write. See `references/best-practices.md`.
 
 ## Built-in Commands
 
@@ -182,6 +183,10 @@ curl -sS -X POST "${ENDPOINT}/query" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
   -d "{\"query\":\"$ARGUMENTS\",\"container\":\"${CONTAINER}\",\"mode\":\"hybrid\",\"top_k\":60}"
 ```
+
+> **Prerequisite**: `/query` only sees content ingested through `/documents/text` or `/documents/upload`. If you only used `/ingest-memory/objects` / `/tm remember`, the answer will be empty. To make memory objects queryable, also dual-write through `/documents/text`. See `references/best-practices.md` §1.2.
+>
+> **Latency**: After `/documents/text` returns 200, the knowledge graph still needs **20–60 seconds** to build (entity extraction + relation inference + LLM indexing). Querying immediately after ingestion will return "no information" — wait 30s and retry.
 
 ### Command: `upload`
 
@@ -505,6 +510,8 @@ For platforms without native hook support, add transcendence-memory instructions
 | `references/ARCHITECTURE.md` | Architecture and data flow | When understanding the system |
 | `references/OPERATIONS.md` | Operational verification and acceptance | During deployment verification |
 | `references/troubleshooting.md` | Troubleshooting guide | When something goes wrong |
+| `references/best-practices.md` | Dual-path model, dedicated containers, async timing, real-world lessons | Before designing memory layout for a new project, or when `/query` returns empty despite successful ingestion |
+| `references/best-practices.zh-CN.md` | Chinese translation of `best-practices.md` | Same as above, when Chinese is preferred |
 | `references/templates/config.toml.template` | Config file template | During first-time setup |
 | `scripts/batch-ingest.py` | Bulk ingest script | For large memory imports |
 
