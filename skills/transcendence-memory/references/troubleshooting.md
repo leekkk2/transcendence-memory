@@ -174,24 +174,58 @@ curl -sS -X POST "${ENDPOINT}/query" \
 ```
 
 可能原因：
-- 尚未通过 `/documents/text` 或 `/documents/upload` 入库任何内容
-- 入库后处理尚未完成（异步任务）→ 用 `/jobs/{pid}` 检查状态
-- 查询与入库内容语义不相关 → 尝试更宽泛的查询
+- **最常见误用** — 只通过 `/ingest-memory/objects`（轻量路径）写入数据。该端点仅服务 `/search`,**不会自动进 RAG-Anything 知识图谱**。`/query` 必须通过 `/documents/text` 或 `/documents/upload` 显式入图。详见 `references/best-practices.md` 双路径决策树
+- 入库后处理尚未完成 — `/documents/text` 通常需要 **20–60 秒**完成实体抽取与图谱索引,刚 ingest 完立即 query 必然返回"无信息"。等 30 秒重试,或对大文档轮询 `/jobs/{pid}`
+- 查询与入库内容语义不相关 → 尝试更具体的关键词（实体名 / 库名 / 文件名）。本次实战观察到过宽泛的问题（如"推荐什么方案?"）召回率明显低于具体问题（如"OTA 安装步骤"）
 - LLM 未配置（server 端问题）→ 联系管理员
+
+### `/search` 有结果但 `/query` 返回"无信息"
+
+**根因**：双路径架构下,内容只入了 LanceDB 向量索引,没入 RAG-Anything 知识图谱。
+
+**修复**：把同一份内容也通过 `/documents/text` 入一次（推荐合并成一份 Markdown 长文本）：
+
+```bash
+DOC_TEXT=$(python3 -c "import json; print(json.dumps(open('/path/to/doc.md').read()))")
+curl -sS -X POST "${ENDPOINT}/documents/text" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "{\"container\":\"${CONTAINER}\",\"text\":${DOC_TEXT},\"description\":\"概要\"}"
+# 然后等 30 秒再 query
+```
+
+详见 `references/best-practices.md` 的"跨路径双写"。
 
 ### 异步任务查询
 
-大文件上传通常异步处理：
+大文件上传或 `/embed?background=true` 通常异步处理：
 
 ```bash
-# 上传时记录返回的 pid
-# {"status": "accepted", "pid": 12345}
+# 上传/embed 时记录返回的 pid
+# {"pid": 12345, "status": "started", ...}
 
 # 查询任务状态
 curl -sS "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
-# running → 仍在处理
-# completed → 处理完成，可以查询
-# failed → 处理失败，检查错误信息
+```
+
+**响应字段实测**：
+
+```json
+{"pid": 12345, "running": true|false, "exit_code": null|0|<非0>, "message": "..."}
+```
+
+- `running: true` → 仍在处理
+- `running: false, exit_code: 0` → 处理完成,可以 query/search
+- `running: false, exit_code: <非0>` → 处理失败,联系管理员看 server 日志
+
+> 旧版文档中提到的 `status: running|completed|failed` 与 `progress` 字段不准确,**以 `running` 字段为判定基准**。
+
+正确轮询模板：
+
+```bash
+until ! curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}" \
+  | python3 -c "import json,sys; sys.exit(0 if json.load(sys.stdin).get('running') else 1)"; do
+  sleep 5
+done
 ```
 
 ### VLM 相关问题
