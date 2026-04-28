@@ -360,10 +360,10 @@ Common quick checks:
 - **Cannot connect**: run `/tm status` or `curl -sS "${ENDPOINT}/health"`
 - **401/403**: verify that the API key is correct
 - **Search returns empty**: run `/tm embed` first to rebuild the index
-- **Search returns 200 but the body contains an error**: treat it as a failure and inspect the server logs
-- **Document upload fails**: verify file type and size (supported types include PDF, image, and Markdown)
-- **Query returns empty**: make sure content has been ingested through `/documents/text` or `/documents/upload`
-- **Updates or deletes do not appear in search**: run `/tm embed` to refresh the index
+- **Search returns 200 but body contains error / empty after `/tm remember`**: upstream embedding may be rate-limited (server v0.5.2+ auto-retries with backoff); check `/jobs/{pid}` then see `references/troubleshooting.md`
+- **Document upload fails**: verify file type and size (PDF, image, Markdown)
+- **Query returns empty**: make sure content was ingested via `/documents/text` or `/documents/upload`
+- **Updates or deletes not visible**: run `/tm embed` to refresh
 
 ## Batch and Async Operations
 
