@@ -3,6 +3,7 @@
 
 用法：
   python3 batch-ingest.py <endpoint> <api-key> <container> <input-file> [选项]
+  python3 batch-ingest.py <endpoint> <api-key> <container> --test-waf
 
 选项：
   --max-bytes N     单批最大字节数（默认 512000，即 500 KB）
@@ -11,6 +12,7 @@
   --probe           入库前先探测 /ingest-memory/contract
   --resume          跳过上次已成功的行（基于进度文件）
   --failed-log F    失败对象写入指定文件（默认 <input>.failed.jsonl）
+  --test-waf        WAF 自检模式（不入库），对比默认 UA vs WAF 兼容 UA 的响应
 
 输入文件格式（JSONL，每行一个 JSON 对象）：
   {"id":"mem-001","text":"记忆内容","tags":["tag1"]}
@@ -203,13 +205,77 @@ def estimate_payload_bytes(objects: list[dict]) -> int:
     return sum(len(json.dumps(o, ensure_ascii=False).encode("utf-8")) for o in objects) + 100
 
 
+def test_waf(endpoint: str, api_key: str) -> int:
+    """WAF 自检：对比默认 UA 与 WAF 兼容 UA 在 /health 上的响应。
+
+    返回 exit code：0 = 一切正常或确认是 WAF UA 拦截；1 = 其他异常。
+    """
+    print(f"[WAF 自检] endpoint = {endpoint}")
+    print()
+    print("--- A. 默认 urllib UA（应被 Cloudflare 1010 拦截） ---")
+    a_blocked = False
+    try:
+        req = urllib.request.Request(f"{endpoint}/health")  # 故意不带 UA
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"  HTTP {resp.status} — 通过（说明你的 endpoint 没有 WAF 或已放行 Python UA）")
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:120]
+        except Exception:
+            pass
+        print(f"  HTTP {e.code} — body: {body!r}")
+        if e.code == 403 and "1010" in body:
+            print("  → 确认是 Cloudflare WAF UA 拦截（error code 1010）")
+            a_blocked = True
+    except Exception as e:
+        print(f"  连接失败: {e}")
+        return 1
+
+    print()
+    print("--- B. WAF 兼容 UA（应通过） ---")
+    try:
+        req = urllib.request.Request(
+            f"{endpoint}/health",
+            headers={**REQUEST_HEADERS_BASE, "X-API-KEY": api_key},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read()[:200].decode("utf-8", errors="replace")
+            print(f"  HTTP {resp.status} — body: {body!r}")
+    except urllib.error.HTTPError as e:
+        print(f"  HTTP {e.code} — 异常，WAF 兼容 UA 也被拦截，请检查 API key 或 endpoint")
+        return 1
+    except Exception as e:
+        print(f"  连接失败: {e}")
+        return 1
+
+    print()
+    if a_blocked:
+        print("[结论] 你的 endpoint 启用了 Cloudflare WAF。任何自写 Python/Node 客户端"
+              "都必须显式设 User-Agent，例如 'transcendence-memory-batch/0.2'。"
+              "详见 references/troubleshooting.md → '403 Forbidden'。")
+    else:
+        print("[结论] WAF UA 拦截未触发；本机直连无障碍。")
+    return 0
+
+
 def parse_args(argv: list[str]) -> dict:
     """解析命令行参数。"""
+    # --test-waf 模式只需 endpoint / api_key / container（container 可为空字符串）
+    if len(argv) >= 5 and argv[4] == "--test-waf":
+        return {
+            "mode": "test-waf",
+            "endpoint": argv[1].rstrip("/"),
+            "api_key": argv[2],
+            "container": argv[3],
+        }
+
     if len(argv) < 5:
         print(__doc__)
         sys.exit(1)
 
     opts: dict = {
+        "mode": "ingest",
         "endpoint": argv[1].rstrip("/"),
         "api_key": argv[2],
         "container": argv[3],
@@ -260,6 +326,10 @@ def parse_args(argv: list[str]) -> dict:
 
 def main() -> None:
     opts = parse_args(sys.argv)
+
+    if opts.get("mode") == "test-waf":
+        sys.exit(test_waf(opts["endpoint"], opts["api_key"]))
+
     endpoint: str = opts["endpoint"]
     api_key: str = opts["api_key"]
     container: str = opts["container"]
