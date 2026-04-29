@@ -58,6 +58,7 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `auto on` | Enable automatic memory on git commits | `/tm auto on` |
 | `auto off` | Disable automatic memory | `/tm auto off` |
 | `auto status` | Show auto-memory configuration | `/tm auto status` |
+| `upgrade` | Pull latest skill scripts from the upstream repo | `/tm upgrade` |
 
 ### Command: `connect`
 
@@ -410,6 +411,34 @@ curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}"
 | Rebuilding a large container index | `/tm embed` or async mode |
 | Adding documents to the knowledge graph | `/tm upload file.pdf` or `/documents/text` |
 | Asking for an LLM-synthesized answer | `/tm query your question` |
+
+### Command: `upgrade`
+
+Pull the latest skill from upstream. Auto-detects install location (Claude Code plugin cache / `~/.claude/skills/` / Cursor / direct git clone) and `git pull`s it. If the skill was installed by `npx skills add` (non-git tarball), prints the re-install command instead.
+
+```bash
+ROOT=""
+for cand in \
+  "${CLAUDE_PLUGIN_ROOT:-}" \
+  "$HOME/.claude/plugins/cache"/*/transcendence-memory \
+  "$HOME/.claude/plugins/cache"/transcendence-memory*/transcendence-memory \
+  "$HOME/.claude/skills/transcendence-memory" \
+  "$HOME/.cursor/skills/transcendence-memory"; do
+  [ -n "$cand" ] && [ -d "$cand/.git" ] && { ROOT="$cand"; break; }
+done
+
+if [ -n "$ROOT" ]; then
+  cd "$ROOT" && git fetch origin && git pull --ff-only origin main
+  echo "Upgraded to $(git rev-parse --short HEAD) at $ROOT"
+  echo "→ Restart your AI CLI (Claude Code / Cursor / etc.) to reload SKILL.md."
+else
+  echo "Skill not installed via git clone. Re-install one of:"
+  echo "  • Claude Code plugin:  /plugin update transcendence-memory"
+  echo "  • npx skills:          npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory --force"
+fi
+```
+
+> 升级会同步刷新 `SKILL.md` / `references/` / `scripts/batch-ingest.py` / 仓库自带的 plugin hooks。**用户独立部署到 `~/.claude/hooks/transcendence-memory/` 的全局 hook 套件不在升级范围**——那是手写文件，需手动维护（参考 `references/troubleshooting.md` 里 xargs 修复一节）。
 
 ### Command: `auto`
 
