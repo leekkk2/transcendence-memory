@@ -242,6 +242,37 @@ curl -sS -X POST "${ENDPOINT}/search" \
 
 新 container 或新写入的记忆需要先 `/embed` 才能被检索到。
 
+### embed 任务失败 / 卡住（上游 embedding 限速）
+
+**现象**：刚 `/tm remember` 后 `/tm search` 召回不到；`/jobs/{pid}` 显示 `exit_code` 非 0；server 日志含 `embedding upstream 500` 或 `429`。
+
+**根因**：embedding 上游网关（newapi 类反代）短时限速。**server v0.5.2+ 已内置 6 次指数退避 + Retry-After 重试**（≈1.5/3/6/12/24/48s，总计 ≈90s），多数限速会被自动消化。
+
+**诊断**：
+
+1. 查 embed 任务最终态：`curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}"`
+   - `running:false, exit_code:0` → 成功
+   - `running:false, exit_code:非0` → 重试已耗尽，上游持续故障
+   - `running:true` → 仍在跑
+
+2. 直接探上游：
+   ```bash
+   curl -sS -o /dev/null -w "%{http_code}\n" -X POST "$EMBEDDING_BASE_URL/embeddings" \
+     -H "Authorization: Bearer $EMBEDDING_API_KEY" -H "Content-Type: application/json" \
+     -d '{"model":"<embed-model>","input":"ping"}'
+   ```
+   持续 5xx → 等 5–15 分钟或换 key；200 → 已恢复，重发 `/tm embed`。
+
+3. 重新触发：
+   ```bash
+   curl -sS -X POST "${ENDPOINT}/embed" -H "X-API-KEY: ${API_KEY}" \
+     -H "Content-Type: application/json" \
+     -d "{\"container\":\"${CONTAINER}\",\"background\":true}"
+   ```
+
+**管理员调参**（限速窗口 > 90s 时）：`EMBEDDING_MAX_RETRIES` / `EMBEDDING_RETRY_MAX_DELAY` / `EMBEDDING_RETRY_BASE_DELAY`。
+
+**避免**：不要前台循环手动重试 `/tm embed`（会与后台重试踩同一限速窗口）；不要因 `search` 暂空就重写 `remember`（数据已落库）。
 ### update/delete 后变更未生效
 
 **关键**：更新或删除记忆后，必须调用 `/embed` 刷新索引，否则 `/search` 仍返回旧数据。
