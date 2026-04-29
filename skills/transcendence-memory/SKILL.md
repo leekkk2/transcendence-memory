@@ -216,8 +216,11 @@ Supported options:
 | `--probe` | off | 入库前先探测 `/ingest-memory/contract` 确认接口 schema |
 | `--resume` | off | 基于进度文件跳过已成功的行（断点续传） |
 | `--failed-log F` | `<input>.failed.jsonl` | 失败对象写入指定文件 |
+| `--test-waf` | — | 自检模式（不入库），对比默认 UA 与 WAF 兼容 UA 的响应，确认 endpoint 是否被 Cloudflare 拦截 |
 
 The script uses WAF-compatible request headers, auto-splits batches on HTTP 413, and logs failed objects for retry.
+
+> **写自定义客户端时一定要带 User-Agent**：Cloudflare 部署的 endpoint 会把 Python urllib / Go net/http / Node fetch 的默认 UA 直接 1010 拦截（与 payload 大小无关）。任何绕过 `batch-ingest.py` 直接 `urllib.request` / `requests` / `fetch` 的脚本，都需要显式 `User-Agent: transcendence-memory-batch/0.2`（或任意非默认值）。详见 `references/troubleshooting.md` → "403 Forbidden（Cloudflare / WAF 拦截）"。
 
 ## Quick Reference (for configured users)
 
