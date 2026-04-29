@@ -55,20 +55,130 @@ curl -sS -i "${ENDPOINT}/search" \
 
 → 向后端管理员确认正确的 API key。
 
-### 403 Forbidden（Cloudflare / WAF 拦截）
+### 403 Forbidden（Cloudflare / WAF 拦截 — `error code: 1010`）
 
-如果 `curl` 成功但 Python 脚本返回 403，且响应体包含 `error code: 1010` 或 Cloudflare 页面：
+> **2026-04-29 实测确认**：触发条件**与 payload 大小、内容、是否含 markdown / 代码块完全无关**，**只取决于 `User-Agent` 头**。Cloudflare 的 `Browser Integrity Check` 把"Python-urllib/x.x"、空 UA、已知爬虫 UA 列入黑名单，整请求秒拒（响应 0.5–1s 内回 403）。`curl` 默认 UA `curl/8.x` **不被拦**，所以同样 5KB payload 用 curl 通过、用 urllib 失败的对比常被误读为"WAF 拦大 payload"——**实际不是**。
 
-**根因**：Python `urllib.request` 的默认 `User-Agent` 被 WAF 识别并拦截。
+#### 自检：你撞上的是 WAF 还是别的？
 
-**解决**：
-- 使用 `batch-ingest.py` v0.2+，已内置 WAF 兼容请求头
-- 或在自定义脚本中显式设置：
-  ```python
-  headers["User-Agent"] = "transcendence-memory-batch/0.2"
-  headers["Accept"] = "application/json, text/plain, */*"
-  ```
-- 确认不是 API key 问题：同一 key 用 `curl` 测试是否成功
+```bash
+# 1) 不带 UA 的 urllib —— 必 1010
+python3 -c "
+import urllib.request, urllib.error
+try:
+    urllib.request.urlopen('${ENDPOINT}/health', timeout=5).read()
+    print('OK')
+except urllib.error.HTTPError as e:
+    print(e.code, e.read()[:80])
+"
+# 期望：403 b'error code: 1010'
+
+# 2) 带 WAF 兼容 UA 的 urllib —— 必 200
+python3 -c "
+import urllib.request, json
+req = urllib.request.Request('${ENDPOINT}/health',
+    headers={'User-Agent':'transcendence-memory-batch/0.2'})
+print(urllib.request.urlopen(req, timeout=5).read()[:80])
+"
+
+# 3) 一行 batch-ingest 自检（v0.3+）
+python3 <skill-path>/scripts/batch-ingest.py "${ENDPOINT}" "${API_KEY}" "${CONTAINER}" --test-waf
+```
+
+若 1) 失败 + 2) 成功，证明就是 WAF UA 拦截；否则继续往下排查。
+
+#### 解决（自写客户端必读 — 不限于 batch-ingest）
+
+任何**绕过 `batch-ingest.py` 直接调用 `/ingest-memory/objects`、`/search`、`/embed` 等**的脚本（Python urllib / requests / Node fetch / Go net/http 默认 client / Rust reqwest 默认 client）都需要**显式设 User-Agent**：
+
+```python
+# Python urllib
+headers = {
+    "Content-Type": "application/json",
+    "X-API-KEY": api_key,
+    "User-Agent": "transcendence-memory-batch/0.2",  # ← 关键
+    "Accept": "application/json, text/plain, */*",
+}
+
+# Python requests
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "transcendence-memory-batch/0.2",
+    "Accept": "application/json, text/plain, */*",
+})
+```
+
+```javascript
+// Node fetch
+fetch(url, {
+  headers: {
+    "User-Agent": "transcendence-memory-batch/0.2",
+    "X-API-KEY": apiKey,
+  }
+})
+```
+
+或者一律走 `batch-ingest.py` —— 它已内置 WAF 兼容请求头，并提供 `--probe` / `--resume` / `--redact`。
+
+> **管理员侧改法（可选）**：若希望接口对 Python 默认 UA 也放行，在 Cloudflare 把该 endpoint 的 Browser Integrity Check 关闭，或加 WAF Custom Rule `(http.host eq "your.host" and starts_with(http.request.uri.path, "/ingest-memory/")) → Skip Browser Integrity Check`。属于服务端运维，本 skill 不涉及。
+
+### Hook 报错 `xargs: unterminated quote`（auto-memory 后台静默失败）
+
+**现象**：在执行 `git commit` / `python3 -c "..."` / `bash -c "..."` 等含**嵌套引号**的命令后，agent 提示：
+
+```
+Failed with non-blocking status code: xargs: unterminated quote
+Failed with non-blocking status code: xargs: unterminated quote
+```
+
+是 non-blocking 错误，**不影响主流程**，但 auto-memory hook 已静默退出，那次 commit 不会被自动记录。
+
+**根因**：用户机上的 **`~/.claude/hooks/transcendence-memory/on-post-tool-use.sh`** 第 39 行（旧版本）使用 `xargs` 做空白 trim：
+
+```bash
+first_cmd=$(echo "$cmd" | head -1 | sed 's/&&.*//' | sed 's/;.*//' | xargs)
+#                                                                    ^^^^^
+#  xargs 会按 shell-quoted 规则解析输入，遇到未配对引号就抛 unterminated quote
+```
+
+`sed` 截掉 `&&` / `;` 后半段时不解释引号语法，前半段经常残留孤立引号；或者 `python3 -c "import json; print(json.dumps({\"x\":\"y\"}))"` 本身的转义双引号在 `xargs` 看来不配对。
+
+**复现**：
+
+```bash
+echo 'echo "hello && world' | head -1 | sed 's/&&.*//' | xargs
+# → xargs: unterminated quote (exit 1)
+
+echo 'python3 -c "import json; print(json.dumps({\"a\":\"b\"}))"' | sed 's/&&.*//' | xargs
+# → xargs: unterminated quote (exit 1)
+```
+
+**修复（手动改文件 — 推荐）**：把那一行替换为不解释 shell 引号的 awk trim：
+
+```bash
+first_cmd=$(echo "$cmd" | head -1 | sed 's/&&.*//' | sed 's/;.*//' \
+  | awk '{$1=$1; print}')
+```
+
+或一行 sed 自动 patch：
+
+```bash
+sed -i.bak "s/| xargs)$/| awk '{\$1=\$1; print}')/" \
+  ~/.claude/hooks/transcendence-memory/on-post-tool-use.sh
+```
+
+**为什么不用 `xargs -0`**：本场景输入并非 null-delimited，`xargs -0` 仍按规则要求每条记录无 NUL；最干净的做法就是不用 xargs。`awk '{$1=$1; print}'` 是 POSIX awk 的标准 trim 习语，**不解释**任何引号、反斜杠、特殊字符。
+
+**验证**：
+
+```bash
+# 修复后再跑一次，预期 exit 0、无报错输出
+echo 'python3 -c "import json; print(json.dumps({\"a\":\"b\"}))"' \
+  | sed 's/&&.*//' | sed 's/;.*//' | awk '{$1=$1; print}'
+echo "exit=$?"  # 期望 0
+```
+
+> 仓库自带的 `hooks/post-commit-memory`（plugin 标准格式）**不含此 bug**。本节针对的是用户独立部署到 `~/.claude/hooks/transcendence-memory/` 的全局 hook 套件（不通过 `/plugin install` 而是手动写入）。
 
 ### 413 Request Entity Too Large
 
