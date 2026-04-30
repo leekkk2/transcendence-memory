@@ -27,9 +27,10 @@ Or use the plugin marketplace inside a Claude Code session:
 ```
 /plugin marketplace add leekkk2/transcendence-memory
 /plugin install transcendence-memory
+/reload-plugins
 ```
 
-Restart the session after installation, then use the `/tm` command.
+After `/reload-plugins`, the four lifecycle hooks and the `/tm` slash commands are immediately active — no session restart required.
 
 ## Quick Start
 
