@@ -28,9 +28,10 @@ npx skills add https://github.com/leekkk2/transcendence-memory --skill transcend
 ```text
 /plugin marketplace add leekkk2/transcendence-memory
 /plugin install transcendence-memory
+/reload-plugins
 ```
 
-安装后重启会话，即可使用 `/tm` 命令。
+`/reload-plugins` 后，四个生命周期 hook 与 `/tm` 命令立即生效，无需重启会话。
 
 ## 快速开始
 
