@@ -124,6 +124,9 @@ fetch(url, {
 
 ### Hook 报错 `xargs: unterminated quote`（auto-memory 后台静默失败）
 
+> ⚠️ **SUPERSEDED 2026-04-30 → v0.3.0 已内置修复，无需手动操作**
+> 本节仅作历史参考。v0.3.0+ 插件通过 `hooks/common.sh` 共享库统一处理命令 trim，不再使用 `xargs`，此问题已不复存在。如果你用 `/plugin install transcendence-memory` 安装的是最新版，可跳过本节。
+
 **现象**：在执行 `git commit` / `python3 -c "..."` / `bash -c "..."` 等含**嵌套引号**的命令后，agent 提示：
 
 ```

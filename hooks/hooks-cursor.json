@@ -6,10 +6,20 @@
         "command": "./hooks/session-start"
       }
     ],
+    "userPromptSubmit": [
+      {
+        "command": "[ -f \"$HOME/.transcendence-memory/config.toml\" ] && ./hooks/prompt-inject || true"
+      }
+    ],
     "postToolUse": [
       {
         "matcher": "Bash",
         "command": "echo \"$TOOL_INPUT\" | grep -qE 'git\\s+(commit|merge|cherry-pick|rebase)' && [ -f \"$HOME/.transcendence-memory/auto-memory.enabled\" ] && [ -f \"$HOME/.transcendence-memory/config.toml\" ] && ./hooks/post-commit-memory || true"
+      }
+    ],
+    "stop": [
+      {
+        "command": "[ -f \"$HOME/.transcendence-memory/auto-memory.enabled\" ] && [ -f \"$HOME/.transcendence-memory/config.toml\" ] && ./hooks/session-stop || true"
       }
     ]
   }
