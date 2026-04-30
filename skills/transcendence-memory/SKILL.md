@@ -27,7 +27,10 @@ Or inside a Claude Code session:
 ```text
 /plugin marketplace add leekkk2/transcendence-memory
 /plugin install transcendence-memory
+/reload-plugins
 ```
+
+After `/reload-plugins`, the four lifecycle hooks (SessionStart / UserPromptSubmit / PostToolUse / Stop) and the `/tm` slash commands are immediately available — no session restart required.
 
 ## Principles
 
