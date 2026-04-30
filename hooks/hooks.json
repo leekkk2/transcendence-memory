@@ -12,6 +12,16 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/.transcendence-memory/config.toml\" ] && \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" prompt-inject || true"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Bash",
@@ -19,6 +29,17 @@
           {
             "type": "command",
             "command": "echo \"$TOOL_INPUT\" | grep -qE 'git\\s+(commit|merge|cherry-pick|rebase)' && [ -f \"$HOME/.transcendence-memory/auto-memory.enabled\" ] && [ -f \"$HOME/.transcendence-memory/config.toml\" ] && \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" post-commit-memory || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$HOME/.transcendence-memory/auto-memory.enabled\" ] && [ -f \"$HOME/.transcendence-memory/config.toml\" ] && \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-stop || true",
+            "async": true
           }
         ]
       }
