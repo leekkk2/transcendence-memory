@@ -1,47 +1,17 @@
 #!/usr/bin/env bash
-# SessionStart hook for transcendence-memory plugin
-# Checks connection status and prompts for setup or auto-memory enablement.
+# SessionStart hook：健康检查 + 记忆召回注入
+# 读写分离：记忆召回只需 config.toml，不依赖 auto-memory.enabled
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CONFIG_DIR="$HOME/.transcendence-memory"
-CONFIG_FILE="$CONFIG_DIR/config.toml"
-AUTO_MEMORY_MARKER="$CONFIG_DIR/auto-memory.enabled"
+source "${SCRIPT_DIR}/common.sh"
 
-# --- Helper: escape string for JSON embedding ---
-escape_for_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
-}
+stdin_content=$(cat)
 
-# --- Helper: output context for the correct platform ---
-emit_context() {
-    local context="$1"
-    local escaped
-    escaped=$(escape_for_json "$context")
-
-    if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
-        printf '{\n  "additional_context": "%s"\n}\n' "$escaped"
-    elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
-        printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
-    else
-        printf '{\n  "additionalContext": "%s"\n}\n' "$escaped"
-    fi
-}
-
-# --- Build context message ---
-context=""
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    # Not configured — prompt for setup
-    context="[transcendence-memory] Not configured yet. The user has the transcendence-memory skill installed but has not connected to a backend server.
+# --- 未配置 ---
+if [ ! -f "$TM_CONFIG_FILE" ]; then
+    emit_context "SessionStart" "[transcendence-memory] Not configured yet. The user has the transcendence-memory skill installed but has not connected to a backend server.
 
 If the user wants to set up persistent memory, guide them through:
 1. Deploy transcendence-memory-server (see https://github.com/leekkk2/transcendence-memory-server)
@@ -49,39 +19,93 @@ If the user wants to set up persistent memory, guide them through:
 3. Run: /tm connect <token>
 
 Do NOT bring this up unprompted unless the user mentions memory, recall, or context persistence."
-else
-    # Configured — read connection info
-    ENDPOINT=$(grep '^endpoint' "$CONFIG_FILE" 2>/dev/null | sed 's/.*= *"//' | sed 's/".*//' || echo "")
-    CONTAINER=$(grep '^container' "$CONFIG_FILE" 2>/dev/null | sed 's/.*= *"//' | sed 's/".*//' || echo "")
-
-    if [ -n "$ENDPOINT" ]; then
-        # Quick health check (timeout 3s, silent failure)
-        health=$(curl -sS --connect-timeout 3 --max-time 5 "$ENDPOINT/health" 2>/dev/null || echo "unreachable")
-
-        if echo "$health" | grep -q '"status"'; then
-            context="[transcendence-memory] Connected to ${ENDPOINT} (container: ${CONTAINER}). Server is healthy.
-
-Available commands: /tm search, /tm remember, /tm query, /tm upload, /tm status, /tm embed, /tm containers, /tm batch"
-        else
-            context="[transcendence-memory] Connected to ${ENDPOINT} (container: ${CONTAINER}), but server health check failed (${health}).
-
-The user may need to check server status. Available: /tm status for diagnostics."
-        fi
-    else
-        context="[transcendence-memory] Config file exists but endpoint is missing. Run /tm connect --manual to reconfigure."
-    fi
-
-    # Check auto-memory status
-    if [ ! -f "$AUTO_MEMORY_MARKER" ]; then
-        context="${context}
-
-[transcendence-memory] Automatic memory is not enabled. The user can enable it with /tm auto on to automatically remember git commit summaries. Do NOT suggest this unless the user asks about automation or memory management."
-    else
-        context="${context}
-
-[transcendence-memory] Automatic memory is enabled. Git commit summaries will be auto-stored. The user can disable with /tm auto off."
-    fi
+    exit 0
 fi
 
-emit_context "$context"
+load_config
+
+if [ -z "$TM_ENDPOINT" ]; then
+    emit_context "SessionStart" "[transcendence-memory] Config file exists but endpoint is missing. Run /tm connect --manual to reconfigure."
+    exit 0
+fi
+
+# --- 健康检查 ---
+health=$(curl -sS --connect-timeout 3 --max-time 5 "${TM_ENDPOINT}/health" 2>/dev/null || echo "unreachable")
+server_ok=false
+echo "$health" | grep -q '"status"' && server_ok=true
+
+if $server_ok; then
+    base_context="[transcendence-memory] Connected to ${TM_ENDPOINT} (container: ${TM_CONTAINER}). Server is healthy.
+
+Available commands: /tm search, /tm remember, /tm query, /tm upload, /tm status, /tm embed, /tm containers, /tm batch"
+else
+    base_context="[transcendence-memory] Connected to ${TM_ENDPOINT} (container: ${TM_CONTAINER}), but server health check failed (${health}).
+
+The user may need to check server status. Available: /tm status for diagnostics."
+fi
+
+# auto-memory 状态提示
+if ! is_auto_memory_enabled; then
+    base_context="${base_context}
+
+[transcendence-memory] Automatic memory is not enabled. The user can enable it with /tm auto on to automatically remember git commits and session summaries. Do NOT suggest this unless the user asks about automation or memory management."
+else
+    base_context="${base_context}
+
+[transcendence-memory] Automatic memory is enabled. Git commits and session summaries will be auto-stored. The user can disable with /tm auto off."
+fi
+
+# --- 记忆召回（仅健康时执行，读写分离无需 auto-memory.enabled）---
+if ! $server_ok; then
+    emit_context "SessionStart" "$base_context"
+    exit 0
+fi
+
+# 根据 source 字段选择查询策略
+source_type=$(echo "$stdin_content" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('source', 'startup'))
+except Exception:
+    print('startup')
+" 2>/dev/null || echo "startup")
+
+case "$source_type" in
+    compact) query="key decisions context summaries"; topk=5 ;;
+    resume)  query="recent session progress tasks";   topk=5 ;;
+    *)       query="recent work project context";     topk=8 ;;
+esac
+
+search_result=$(tm_search "$query" "$topk")
+
+# 过滤 score < 0.7 的结果并格式化
+memory_block=$(echo "$search_result" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    hits = data.get('results', [])
+    lines = []
+    for h in hits:
+        score = h.get('score', 1.0)
+        if score < 0.7:
+            text = h.get('text', '').strip()
+            if text:
+                lines.append('• ' + text[:200])
+    if lines:
+        print('\n'.join(lines))
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+
+if [ -n "$memory_block" ]; then
+    final_context="${base_context}
+
+[transcendence-memory recalled memories]
+${memory_block}"
+else
+    final_context="$base_context"
+fi
+
+emit_context "SessionStart" "$final_context"
 exit 0

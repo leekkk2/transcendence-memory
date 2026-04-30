@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook：关键词或长 prompt 触发记忆召回注入
+# 读写分离：关键词触发不依赖 auto-memory；长度触发需要 auto-memory.enabled
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+# 快速守卫：未配置直接退出（hooks.json 外层已守卫，双保险）
+[ -f "$TM_CONFIG_FILE" ] || exit 0
+
+stdin_content=$(cat)
+
+# 提取 prompt 字段
+prompt=$(echo "$stdin_content" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    # UserPromptSubmit 的 prompt 字段
+    p = data.get('prompt', '') or data.get('message', '') or ''
+    print(p)
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+
+# 守卫：太短或 /tm 命令直接跳过
+[ "${#prompt}" -lt 15 ] && exit 0
+case "$prompt" in /tm\ *) exit 0 ;; esac
+
+load_config
+[ -z "$TM_ENDPOINT" ] && exit 0
+
+# 触发判断：满足任一条件才搜索
+should_search=false
+
+# 条件 a：包含回忆关键词（读操作，不依赖 auto-memory）
+if echo "$prompt" | grep -qiE '之前|上次|以前|recall|history|remember|previously|last time|discussed|mentioned'; then
+    should_search=true
+fi
+
+# 条件 b：长 prompt（>80 字节）且 auto-memory 已启用
+if ! $should_search && [ "${#prompt}" -gt 80 ] && is_auto_memory_enabled; then
+    should_search=true
+fi
+
+$should_search || exit 0
+
+search_result=$(tm_search "$prompt" 3)
+
+# 过滤 score < 0.6 的高相关结果并格式化
+memory_lines=$(echo "$search_result" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    hits = data.get('results', [])
+    lines = []
+    for h in hits:
+        score = h.get('score', 1.0)
+        if score < 0.6:
+            text = h.get('text', '').strip()
+            if text:
+                lines.append('• ' + text[:200])
+    if lines:
+        print('\n'.join(lines))
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+
+# 无相关记忆时静默退出，不打扰用户
+[ -z "$memory_lines" ] && exit 0
+
+emit_context "UserPromptSubmit" "[transcendence-memory relevant context]
+${memory_lines}"
+exit 0
