@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Stop hook：提取 session transcript 最后几条 assistant 消息，存为 session-summary 记忆
+# 需要 auto-memory.enabled；5 分钟节流防重复存储；无任何 stdout 输出
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+# 写操作守卫：需显式开启 auto-memory
+is_auto_memory_enabled || exit 0
+
+load_config
+[ -z "$TM_ENDPOINT" ] && exit 0
+
+stdin_content=$(cat)
+
+# 提取 session_id 和 transcript_path
+session_id=$(echo "$stdin_content" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('session_id', '') or '')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+
+transcript_path=$(echo "$stdin_content" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data.get('transcript_path', '') or '')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+
+[ -z "$session_id" ] && exit 0
+
+# 5 分钟节流：同一 session_id 在 300 秒内只存一次
+THROTTLE_DIR="${TM_CONFIG_DIR}/.stop-throttle"
+mkdir -p "$THROTTLE_DIR" 2>/dev/null || true
+throttle_file="${THROTTLE_DIR}/${session_id}"
+
+if [ -f "$throttle_file" ]; then
+    last_ts=$(cat "$throttle_file" 2>/dev/null || echo "0")
+    now=$(date +%s)
+    elapsed=$(( now - last_ts ))
+    [ "$elapsed" -lt 300 ] && exit 0
+fi
+
+# 更新节流时间戳；清理超过 30 分钟的旧文件
+date +%s > "$throttle_file"
+find "$THROTTLE_DIR" -maxdepth 1 -type f -mmin +30 -delete 2>/dev/null || true
+
+# transcript 不存在则退出
+[ -z "$transcript_path" ] && exit 0
+[ -f "$transcript_path" ] || exit 0
+
+# 解析 JSONL，提取最后 100 行中 role=assistant 的消息（最后 3 条，每条截至 500 字符）
+summary=$(python3 - "$transcript_path" <<'PYEOF'
+import sys, json
+
+path = sys.argv[1]
+messages = []
+try:
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        lines = f.readlines()[-100:]
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if obj.get('role') != 'assistant':
+            continue
+        content = obj.get('content', '')
+        if isinstance(content, list):
+            parts = [b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text']
+            content = ' '.join(parts)
+        content = str(content).strip()
+        if len(content) >= 20:
+            messages.append(content[:500])
+except Exception:
+    pass
+
+if messages:
+    last3 = messages[-3:]
+    print(' | '.join(last3))
+PYEOF
+2>/dev/null || echo "")
+
+[ -z "$summary" ] && exit 0
+
+project=$(basename "$(pwd)" 2>/dev/null || echo "unknown")
+timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d")
+mem_text="[session-summary] project:${project} | ${timestamp} | ${summary}"
+# 截断至 800 字符避免超大条目
+mem_text="${mem_text:0:800}"
+mem_id="session-$(date +%s)-${session_id:0:8}"
+tags_json="[\"auto-session\",\"project:${project}\",\"summary\"]"
+
+tm_store "$mem_text" "$mem_id" "$tags_json"
+exit 0

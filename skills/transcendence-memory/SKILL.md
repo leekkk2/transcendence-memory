@@ -438,7 +438,7 @@ else
 fi
 ```
 
-> 升级会同步刷新 `SKILL.md` / `references/` / `scripts/batch-ingest.py` / 仓库自带的 plugin hooks。**用户独立部署到 `~/.claude/hooks/transcendence-memory/` 的全局 hook 套件不在升级范围**——那是手写文件，需手动维护（参考 `references/troubleshooting.md` 里 xargs 修复一节）。
+> 升级会同步刷新 `SKILL.md` / `references/` / `scripts/batch-ingest.py` / 仓库自带的全部 plugin hooks（SessionStart + UserPromptSubmit + PostToolUse + Stop）。升级后重启 AI CLI 即可生效。
 
 ### Command: `auto`
 
@@ -476,33 +476,42 @@ fi
 
 ## Automatic Memory
 
-When enabled, transcendence-memory automatically stores a memory after every git commit, merge, cherry-pick, or rebase. This is powered by lifecycle hooks that integrate with the host AI coding CLI.
+transcendence-memory uses four lifecycle hooks for a fully automatic memory experience. Writing memories requires `auto-memory.enabled`; reading and injecting memories requires only `config.toml` (read-write separation).
 
 ### How it works
 
-1. A **SessionStart** hook fires when a new session begins. It checks the connection status and tells the agent whether auto-memory is enabled.
-2. A **PostToolUse** hook fires after every shell command. If the command was a git commit and auto-memory is enabled, the agent is instructed to store a one-line commit summary as a memory tagged `auto-commit`.
+| Hook | Event | Requires auto-memory | What it does |
+|------|-------|---------------------|--------------|
+| `session-start` | SessionStart | No (read-only) | Health check + recall relevant memories from previous sessions and inject into context |
+| `prompt-inject` | UserPromptSubmit | Keyword: No / Long prompt: Yes | Trigger on recall keywords or long prompts; inject relevant memories before agent responds |
+| `post-commit-memory` | PostToolUse (Bash) | Yes | After git commit/merge/rebase, instruct agent to store a commit summary memory |
+| `session-stop` | Stop | Yes | Extract last 3 assistant messages from transcript and store as session-summary memory (5-minute throttle) |
+
+All four hooks are installed automatically via `/plugin install transcendence-memory`.
 
 ### Enable / disable
 
 ```text
-/tm auto on       # enable auto-memory
+/tm auto on       # enable auto-memory (writing: PostToolUse + Stop hooks)
 /tm auto off      # disable auto-memory
 /tm auto status   # check current configuration
 ```
 
+Memory recall via SessionStart and UserPromptSubmit (keyword mode) works independently of `auto-memory` — they only need a configured `config.toml`.
+
 ### What gets stored
 
-Each auto-commit memory follows this format:
-
+**Auto-commit memory** (PostToolUse):
 ```
 [commit abc1234] fix: resolve port conflict in docker-compose | files: M docker-compose.yml, M .env.example
 ```
+Tagged `auto-commit` for easy filtering: `/tm search auto-commit`
 
-All auto-commit memories are tagged `auto-commit` for easy filtering:
-```text
-/tm search auto-commit
+**Session summary memory** (Stop):
 ```
+[session-summary] project:my-project | 2026-04-30T12:00:00Z | <last 3 assistant messages>
+```
+Tagged `auto-session` + `summary` for filtering: `/tm search session-summary`
 
 ## Platform Support
 
@@ -546,6 +555,11 @@ For platforms without native hook support, add transcendence-memory instructions
 | `references/best-practices.zh-CN.md` | Chinese translation of `best-practices.md` | Same as above, when Chinese is preferred |
 | `references/templates/config.toml.template` | Config file template | During first-time setup |
 | `scripts/batch-ingest.py` | Bulk ingest script | For large memory imports |
+| `hooks/common.sh` | Shared bash library for all hooks (config loading, API calls, JSON escaping) | Auto-loaded by hooks |
+| `hooks/session-start` | SessionStart hook: health check + memory recall injection | Auto-registered |
+| `hooks/prompt-inject` | UserPromptSubmit hook: recall-keyword / long-prompt triggered memory injection | Auto-registered |
+| `hooks/post-commit-memory` | PostToolUse hook: instruct agent to store git commit summary | Auto-registered |
+| `hooks/session-stop` | Stop hook: auto-store session summary memory | Auto-registered |
 
 ## When NOT to Use
 
