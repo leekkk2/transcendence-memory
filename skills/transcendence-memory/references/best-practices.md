@@ -73,9 +73,9 @@ curl -sS -X POST "${ENDPOINT}/documents/text" \
 
 ### 2.1 Anti-pattern — dump everything into the default container
 
-Most projects keep a generic default container (e.g. `team`, `host-z`) that accumulates thousands of conversation backups and notes. **A few high-quality memories written into such a container get drowned in the noise:**
+Most projects keep a generic default container (e.g. `my-project`, `home`) that accumulates thousands of conversation backups and notes. **A few high-quality memories written into such a container get drowned in the noise:**
 
-- Observed: a 5,000+ chunk `team` container; 4 freshly written React Native OTA memories; query `"react native ota"` returned conversation backups for the entire `topk=10` window — none of the new memories surfaced
+- Observed: a 5,000+ chunk `my-project` container; 4 freshly written React Native OTA memories; query `"react native ota"` returned conversation backups for the entire `topk=10` window — none of the new memories surfaced
 - Same 4 memories in a fresh `react-native-recipes` container (4 chunks total): top-1 score `0.475`, all four ranked in the top 4
 
 ### 2.2 Recommended — one dedicated container per reusable topic
@@ -171,7 +171,7 @@ A 200 response only means the document has been queued. **Wait at least 30 secon
 ### 4.3 Container hygiene
 
 - One topic per container (search experience is best below ~1000 chunks per container)
-- Default containers (`team`, `host-z`, etc.) hold short-term project memory; long-lived reusable knowledge belongs in dedicated containers
+- Default containers (`my-project`, `home`, etc.) hold short-term project memory; long-lived reusable knowledge belongs in dedicated containers
 - Periodically run `/tm containers` and prune obsolete containers via `DELETE /containers/{name}`
 
 ### 4.4 Configuration
