@@ -19,7 +19,7 @@ curl -sS "${ENDPOINT}/export-connection-token?container=${CONTAINER}" \
 
 或由后端管理员直接提供 token。Token 是一个 base64 编码的 JSON 字符串，形如：
 ```
-eyJlbmRwb2ludCI6Imh0dHBzOi8vcmFnLmV4YW1wbGUuY29tIiwiYXBpX2tleSI6InNrLXh4eCIsImNvbnRhaW5lciI6ImltYWMifQ==
+eyJlbmRwb2ludCI6Imh0dHBzOi8vcmFnLmV4YW1wbGUuY29tIiwiYXBpX2tleSI6InNrLXh4eCIsImNvbnRhaW5lciI6ImhvbWUifQ==
 ```
 
 ### 导入步骤
@@ -27,7 +27,7 @@ eyJlbmRwb2ludCI6Imh0dHBzOi8vcmFnLmV4YW1wbGUuY29tIiwiYXBpX2tleSI6InNrLXh4eCIsImNv
 1. **解码 token**：
 ```bash
 echo '<token>' | base64 -d
-# 输出: {"endpoint":"https://rag.example.com","api_key":"sk-xxx","container":"host-z"}
+# 输出: {"endpoint":"https://rag.example.com","api_key":"sk-xxx","container":"home"}
 ```
 
 2. **创建配置目录**：
@@ -40,7 +40,7 @@ mkdir -p ~/.transcendence-memory && chmod 700 ~/.transcendence-memory
 cat > ~/.transcendence-memory/config.toml << 'EOF'
 [connection]
 endpoint = "https://rag.example.com"
-container = "host-z"
+container = "home"
 
 [auth]
 mode = "api_key"
@@ -60,7 +60,7 @@ curl -sS "https://rag.example.com/health"
 ```bash
 curl -sS -X POST "https://rag.example.com/search" \
   -H "X-API-KEY: sk-xxx" -H "Content-Type: application/json" \
-  -d '{"container":"host-z","query":"test","topk":3}'
+  -d '{"container":"home","query":"test","topk":3}'
 ```
 
 预期：HTTP 200（新 container 可能返回空结果，这正常）。
@@ -77,7 +77,7 @@ curl -sS -X POST "https://rag.example.com/search" \
 |------|------|------|
 | endpoint | 后端服务地址 | `https://rag.example.com` |
 | api_key | 后端 API 密钥 | `sk-xxx` |
-| container | 你的命名空间 | `host-z`、`work`、`lab` |
+| container | 你的命名空间 | `home`、`work`、`lab` |
 
 然后按方式一的步骤 2-5 操作，手动填入值。
 
@@ -107,7 +107,7 @@ CLI 是可选的，安装需要 Python >= 3.13。
 ```toml
 [connection]
 endpoint = "https://rag.example.com"   # 后端地址
-container = "host-z"                       # 命名空间
+container = "home"                       # 命名空间
 
 [auth]
 mode = "api_key"                         # 鉴权模式
