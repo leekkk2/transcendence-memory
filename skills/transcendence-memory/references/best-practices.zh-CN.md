@@ -72,9 +72,9 @@ curl -sS -X POST "${ENDPOINT}/documents/text" \
 
 ### 2.1 反模式 — 把所有东西塞默认容器
 
-很多项目默认 container 是 `yzjx`、`imac` 这种通用名,日积月累塞进数千条对话备份/笔记。**新写入的精炼经验会被淹没在噪声里**:
+很多项目默认 container 是 `my-project`、`home` 这种通用名,日积月累塞进数千条对话备份/笔记。**新写入的精炼经验会被淹没在噪声里**:
 
-- 实测:在 5000+ chunks 的 yzjx 容器里写入 4 条 RN OTA 经验,用 "react native ota" 检索,top 5 全部是历史对话,新经验进不了 topk=10
+- 实测:在 5000+ chunks 的 my-project 容器里写入 4 条 RN OTA 经验,用 "react native ota" 检索,top 5 全部是历史对话,新经验进不了 topk=10
 - 同样 4 条放进新建的 react-native-recipes 容器(只有 4 条),top 1 score=0.475 直接命中
 
 ### 2.2 推荐模式 — 按主题建专属容器
@@ -170,7 +170,7 @@ done
 ### 4.3 容器管理
 
 - 一个主题一个容器(< 1000 chunks 单容器搜索体验最好)
-- 默认容器(`yzjx`/`imac` 等)只放当前项目的临时记忆,不放长期可复用知识
+- 默认容器(`my-project`/`home` 等)只放当前项目的临时记忆,不放长期可复用知识
 - 周期性 `/tm containers` 检查容器列表,清理废弃容器(`DELETE /containers/{name}`)
 
 ### 4.4 配置

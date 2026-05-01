@@ -14,7 +14,7 @@
 │  transcendence-memory-server                     │
 │  ├── FastAPI HTTP 层                             │
 │  ├── Container 隔离                              │
-│  │   ├── container: imac                         │
+│  │   ├── container: home                         │
 │  │   ├── container: work                         │
 │  │   └── container: lab                          │
 │  │                                               │
