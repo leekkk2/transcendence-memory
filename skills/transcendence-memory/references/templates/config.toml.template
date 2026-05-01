@@ -4,7 +4,7 @@
 
 [connection]
 endpoint = "https://your-memory-endpoint.example.com"  # 后端服务地址
-container = "your-container-name"                        # 命名空间（如 host-z、work、lab）
+container = "your-container-name"                        # 命名空间（如 home、work、lab）
 
 [auth]
 mode = "api_key"                                         # 鉴权模式
