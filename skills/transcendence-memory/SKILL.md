@@ -49,14 +49,14 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `connect --manual` | Enter endpoint, api_key, and container manually | `/tm connect --manual` |
 | `status` | Check connection status and server health | `/tm status` |
 | `search <query>` | Run semantic search over memories | `/tm search architecture decision from the last deployment` |
-| `search --match <pattern> <query>` | Search across all containers whose name fuzzy-matches `<pattern>` | `/tm search --match yzjx docker compose` |
+| `search --match <pattern> <query>` | Search across all containers whose name fuzzy-matches `<pattern>` | `/tm search --match my-project docker compose` |
 | `search --all <query>` | Search across **every** container at once | `/tm search --all release notes` |
 | `remember <text>` | Store one memory quickly | `/tm remember Port conflicts caused the deployment failure` |
 | `update <id> <text>` | Update an existing memory's text in the current container | `/tm update mem-001 New corrected content` |
 | `embed` | Rebuild the index for the current container | `/tm embed` |
 | `query <question>` | Run a multimodal RAG query and get an LLM-generated answer | `/tm query What is the overall project architecture?` |
 | `upload <file>` | Upload a file into the knowledge graph | `/tm upload ./design.pdf` |
-| `containers [pattern]` | List containers, optionally filtered by a fuzzy pattern | `/tm containers yzjx` |
+| `containers [pattern]` | List containers, optionally filtered by a fuzzy pattern | `/tm containers my-project` |
 | `batch <file.jsonl>` | Bulk import memories | `/tm batch memories.jsonl` |
 | `auto on` | Enable automatic memory on git commits | `/tm auto on` |
 | `auto off` | Disable automatic memory | `/tm auto off` |
@@ -177,7 +177,7 @@ curl -sS "$URL" -H "X-API-KEY: ${API_KEY}"
 
 示例：
 - `/tm containers` — 列出全部
-- `/tm containers yzjx` — 列出名字里包含 `yzjx` 的容器（大小写不敏感）
+- `/tm containers my-project` — 列出名字里包含 `my-project` 的容器（大小写不敏感）
 
 ### Command: `query`
 
@@ -241,10 +241,14 @@ curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
   -d '{"container":"${CONTAINER}","objects":[{"id":"mem-001","text":"content to store","tags":["tag1"]}]}'
 
-# Rebuild the index after storing a new memory
+# Rebuild the index after storing a new memory.
+# Server v0.5.10+ enqueues this into a persistent queue and returns immediately
+# with a job_id (the legacy `pid` field). The single background worker drains
+# jobs at a stable, host-friendly pace; duplicate /embed calls for the same
+# container coalesce into one pending job.
 curl -sS -X POST "${ENDPOINT}/embed" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"container":"${CONTAINER}","background":false,"wait":true}'
+  -d '{"container":"${CONTAINER}"}'
 
 # Update a memory
 curl -sS -X PUT "${ENDPOINT}/containers/${CONTAINER}/memories/mem-001" \
@@ -285,7 +289,7 @@ curl -sS -X POST "${ENDPOINT}/query" \
 curl -sS "${ENDPOINT}/containers" -H "X-API-KEY: ${API_KEY}"
 
 # Fuzzy filter by name (case-insensitive substring; mode also supports prefix / glob)
-curl -sS "${ENDPOINT}/containers?pattern=yzjx" -H "X-API-KEY: ${API_KEY}"
+curl -sS "${ENDPOINT}/containers?pattern=my-project" -H "X-API-KEY: ${API_KEY}"
 
 # Delete a container
 curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}" \
@@ -390,19 +394,31 @@ python3 <skill-path>/scripts/batch-ingest.py \
 
 The script batches by both count and byte size, uses WAF-compatible headers, auto-splits on 413, supports secrets redaction, contract probing, resume, and failed-object logging. Zero external dependencies.
 
-### Async Tasks
+### Persistent Queue (v0.5.10+)
 
-`/embed` and `/documents/upload` support async mode:
+`/embed`, `/ingest-memory`, and `/ingest-structured` all enqueue into a SQLite-backed queue
+that survives server restarts. A single background worker drains jobs slowly so
+heavy ingest never overloads the host. Duplicate enqueues for the same `(op, container)`
+coalesce into one pending job.
 
 ```bash
-# Submit an index rebuild asynchronously
+# Enqueue an embed job (default mode — returns immediately with a job_id)
 curl -sS -X POST "${ENDPOINT}/embed" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"container":"${CONTAINER}","background":true}'
+  -d '{"container":"${CONTAINER}"}'
 
-# Check async task status
-curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}"
+# Look up a job (the `pid` field carries the queue job_id since v0.5.10)
+curl -sS "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}"
+
+# List pending/running/failed jobs to triage backlog
+curl -sS "${ENDPOINT}/jobs?status=pending" -H "X-API-KEY: ${API_KEY}"
+
+# Cancel a pending job
+curl -sS -X DELETE "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}"
 ```
+
+Failures auto-retry with exponential backoff (30s → 60s → 120s → 5min → 15min, max 5 attempts)
+before transitioning to a permanent `failed` status. No client-side retry logic needed.
 
 ### Choosing an Operation Mode
 

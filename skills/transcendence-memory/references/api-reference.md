@@ -14,16 +14,22 @@
 curl -sS "${ENDPOINT}/health"
 ```
 
-响应示例：
+响应包含（v0.5.10+ 新字段）：
 ```json
 {
   "architecture": "lancedb-only",
   "auth_configured": true,
   "embedding_configured": true,
   "runtime_ready": true,
-  "available_containers": ["imac"]
+  "available_containers": ["home"],
+  "system": {"mem_available_mb": 1800, "load_per_cpu": 1.2, "swap_used_pct": 12.5},
+  "accepting_ingest": true,
+  "queue_stats": {"pending": 3, "running": 1, "done": 42, "failed": 0, "cancelled": 0},
+  "worker_running": true
 }
 ```
+
+`accepting_ingest=false` 表示宿主机当前在 GATE 设置的内存/load/swap 阈值之外，新 ingest 请求会拒绝；客户端应停止发送并退避。`queue_stats` 反映持久化队列里各状态的任务数。
 
 ### POST /search
 
@@ -39,7 +45,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 |------|------|------|------|
 | `query` | string | 是 | 搜索文本 |
 | `topk` | int | 否 | 全局返回数量（默认 5），跨容器场景下也是合并后总数 |
-| `container` | string | 否 | 单容器搜索，向后兼容字段（默认 `imac`） |
+| `container` | string | 否 | 单容器搜索，向后兼容字段（默认 `home`） |
 | `containers` | string[] | 否 | 显式列出多个容器，优先级最高 |
 | `container_pattern` | string | 否 | 模糊匹配容器名（大小写不敏感），优先级高于 `container` |
 | `pattern_mode` | string | 否 | `substring`（默认）/ `prefix` / `glob` |
@@ -48,15 +54,15 @@ curl -sS -X POST "${ENDPOINT}/search" \
 跨容器示例：
 
 ```bash
-# 模糊匹配 yzjx* 的所有容器
+# 模糊匹配 my-project* 的所有容器
 curl -sS -X POST "${ENDPOINT}/search" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"query":"docker compose","container_pattern":"yzjx","topk":5}'
+  -d '{"query":"docker compose","container_pattern":"my-project","topk":5}'
 
 # 显式列出多个容器
 curl -sS -X POST "${ENDPOINT}/search" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"query":"deploy","containers":["yzjx","yzjx_codex"],"topk":10}'
+  -d '{"query":"deploy","containers":["my-project","my-project_codex"],"topk":10}'
 ```
 
 跨容器响应新增字段：
@@ -64,16 +70,16 @@ curl -sS -X POST "${ENDPOINT}/search" \
 ```json
 {
   "status": "ok",
-  "container": "yzjx",
-  "containers": ["yzjx", "yzjx_claude", "yzjx_codex"],
+  "container": "my-project",
+  "containers": ["my-project", "my-project_claude", "my-project_codex"],
   "per_container_status": {
-    "yzjx": "ok",
-    "yzjx_claude": "ok",
-    "yzjx_codex": "not_initialized"
+    "my-project": "ok",
+    "my-project_claude": "ok",
+    "my-project_codex": "not_initialized"
   },
   "results": [
-    {"container": "yzjx", "score": 0.12, "text": "..."},
-    {"container": "yzjx_claude", "score": 0.18, "text": "..."}
+    {"container": "my-project", "score": 0.12, "text": "..."},
+    {"container": "my-project_claude", "score": 0.18, "text": "..."}
   ]
 }
 ```
@@ -84,27 +90,35 @@ curl -sS -X POST "${ENDPOINT}/search" \
 
 触发索引重建。存入新记忆、更新或删除记忆后需调用此端点刷新索引。
 
+**v0.5.10+ 起改为持久化队列模式**：默认（`wait=false`）请求会立即返回 `job_id`，由后台单线程 worker 慢速消费，避免大批量入库时把宿主机 IO/embedding API 打爆。重复对同一 container 调用 `/embed` 会自动合并为同一个 pending job。
+
 ```bash
+# 推荐：立即入队，立即返回，后台慢速索引
 curl -sS -X POST "${ENDPOINT}/embed" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"container":"${CONTAINER}","background":false,"wait":true}'
+  -d '{"container":"${CONTAINER}"}'
 ```
 
 | 参数 | 类型 | 必需 | 说明 |
 |------|------|------|------|
 | `container` | string | 是 | 目标容器 |
-| `background` | bool | 否 | 后台执行 |
-| `wait` | bool | 否 | 等待完成 |
-| `timeout_s` | int | 否 | 超时秒数（默认 600，大容器可设更高） |
+| `background` | bool | 否 | 旧字段，保留兼容；语义已并入 `wait` |
+| `wait` | bool | 否 | `false`（默认）= 入队立返；`true` = 入队后阻塞轮询直到完成或 `timeout_s` 到期 |
+| `timeout_s` | int | 否 | `wait=true` 时的轮询超时（默认 600） |
 
-> **注意**：默认 timeout 为 600 秒。50+ 条记忆的容器 embed 可能需要数分钟。如仍超时，增大 `timeout_s` 或使用 `background: true` 异步模式。
->
-> **大容器实战建议**（数千条 chunks）：同步 `wait=true` 模式下 curl 长时间无输出常被误判为失败,**强烈建议改用 `background: true`**,从响应中拿 `pid`,再用 `/jobs/{pid}` 轮询 `running` 字段。短小容器（< 100 chunks）同步模式也可,通常 5–30 秒返回。
-
-异步模式响应：
+入队响应（`wait=false`）：
 ```json
-{"command": ["python3", "..."], "background": true, "wait": false, "pid": 206287, "status": "started", "note": "Background ingest started."}
+{"command":["embed","my-project"],"code":0,"background":true,"wait":false,"pid":42,"status":"enqueued","note":"Job enqueued (id=42); the background worker will drain it."}
 ```
+
+> `pid` 字段现在是 **queue job_id**（不再是 OS PID）。用 `GET /jobs/42` 查询进度。
+
+完成响应（`wait=true` 或 worker 已处理完）：
+```json
+{"command":["embed","my-project"],"code":0,"status":"done","pid":42,"note":"job_id=42 | attempts=1/5"}
+```
+
+队列内置指数退避（30→60→120→300→900s，最多 5 次），SIGABRT 等瞬态错误会自动重试，无需客户端再做 retry。
 
 ### POST /ingest-memory/objects
 
@@ -128,15 +142,15 @@ curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
   }'
 ```
 
-默认自动在后台触发 embed（`auto_embed: true`）。批量入库时建议设 `auto_embed: false`，最后手动调一次 `/embed`。
+默认 `auto_embed: true`：服务端把 embed 任务入队（同 container 自动合并），后台 worker 稳定消费。批量入库可放心保留 `true`——不会因为批次多而触发任务雪崩。
 
 响应示例：
 ```json
 {
-  "container": "imac",
+  "container": "home",
   "accepted": 1,
   "stored_path": "...",
-  "index_hint": "Run /embed for this container to refresh LanceDB after storing new objects."
+  "index_hint": "Embed job queued; the background worker will index this container shortly."
 }
 ```
 
@@ -183,7 +197,7 @@ curl -sS -X PUT "${ENDPOINT}/containers/${CONTAINER}/memories/mem-001" \
 
 响应示例：
 ```json
-{"status": "updated", "id": "mem-001", "container": "imac"}
+{"status": "updated", "id": "mem-001", "container": "home"}
 ```
 
 ### DELETE /containers/{container}/memories/{id}
@@ -197,7 +211,7 @@ curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}/memories/mem-001" \
 
 响应示例：
 ```json
-{"status": "deleted", "id": "mem-001", "container": "imac"}
+{"status": "deleted", "id": "mem-001", "container": "home"}
 ```
 
 ## 多模态路径（RAG-Anything pipeline）
@@ -220,7 +234,7 @@ curl -sS -X POST "${ENDPOINT}/documents/text" \
 
 响应示例：
 ```json
-{"status": "ok", "container": "imac", "answer": "Text ingested into container imac knowledge graph.", "mode": "insert"}
+{"status": "ok", "container": "home", "answer": "Text ingested into container home knowledge graph.", "mode": "insert"}
 ```
 
 > **重要异步行为**：HTTP 200 仅代表"已接收",真正的知识图谱构建（实体抽取 + 关系推断 + LLM 索引）在后台执行,通常需要 **20–60 秒**才能被 `/query` 召回。短文档（< 5KB）多数 30 秒内可用,长文档可能需要数分钟。如刚 ingest 后 `/query` 返回"无信息",**先等再重试**,不要怀疑数据未写入。
@@ -245,7 +259,7 @@ curl -sS -X POST "${ENDPOINT}/documents/upload" \
 
 响应示例：
 ```json
-{"status": "accepted", "container": "imac", "filename": "document.pdf", "pid": 12345}
+{"status": "accepted", "container": "home", "filename": "document.pdf", "pid": 12345}
 ```
 
 > 大文件上传可能异步处理，通过返回的 `pid` 查询进度。
@@ -288,13 +302,13 @@ curl -sS -X POST "${ENDPOINT}/query" \
 curl -sS "${ENDPOINT}/containers" -H "X-API-KEY: ${API_KEY}"
 
 # 模糊匹配（大小写不敏感子串）
-curl -sS "${ENDPOINT}/containers?pattern=yzjx" -H "X-API-KEY: ${API_KEY}"
+curl -sS "${ENDPOINT}/containers?pattern=my-project" -H "X-API-KEY: ${API_KEY}"
 
 # 前缀匹配
-curl -sS "${ENDPOINT}/containers?pattern=yzjx&mode=prefix" -H "X-API-KEY: ${API_KEY}"
+curl -sS "${ENDPOINT}/containers?pattern=my-project&mode=prefix" -H "X-API-KEY: ${API_KEY}"
 
 # glob 模式
-curl -sS "${ENDPOINT}/containers?pattern=yzjx_*&mode=glob" -H "X-API-KEY: ${API_KEY}"
+curl -sS "${ENDPOINT}/containers?pattern=my-project_*&mode=glob" -H "X-API-KEY: ${API_KEY}"
 ```
 
 | 参数 | 类型 | 必需 | 说明 |
@@ -306,9 +320,9 @@ curl -sS "${ENDPOINT}/containers?pattern=yzjx_*&mode=glob" -H "X-API-KEY: ${API_
 ```json
 {
   "containers": [
-    {"name": "yzjx", "objects": 3237, "indexed": true, "last_modified": "2026-04-09T10:00:00Z"},
-    {"name": "yzjx_claude", "objects": 69, "indexed": true, "last_modified": "2026-04-10T08:30:00Z"},
-    {"name": "yzjx_codex", "objects": 1, "indexed": false, "last_modified": "2026-04-11T12:00:00Z"}
+    {"name": "my-project", "objects": 3237, "indexed": true, "last_modified": "2026-04-09T10:00:00Z"},
+    {"name": "my-project_claude", "objects": 69, "indexed": true, "last_modified": "2026-04-10T08:30:00Z"},
+    {"name": "my-project_codex", "objects": 1, "indexed": false, "last_modified": "2026-04-11T12:00:00Z"}
   ],
   "count": 3
 }
@@ -325,7 +339,7 @@ curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}" \
 
 响应示例：
 ```json
-{"status": "deleted", "container": "imac"}
+{"status": "deleted", "container": "home"}
 ```
 
 ### GET /export-connection-token
@@ -342,38 +356,68 @@ curl -sS "${ENDPOINT}/export-connection-token?container=${CONTAINER}" \
 {"token": "eyJlbmRwb2ludCI6Imh0dHBz..."}
 ```
 
-### GET /jobs/{pid}
+### GET /jobs/{job_id}
 
-查询异步任务状态（如 `/embed?background=true` 或 `/documents/upload` 的进度）。
+查询单个队列任务的状态。`job_id` 是 `/embed`、`/ingest-memory`、`/ingest-structured` 入队时返回的 `pid` 字段（v0.5.10+ 起 pid 字段承载 job_id 而非 OS PID）。
 
 ```bash
 curl -sS "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
 ```
 
-响应示例（运行中）：
+响应示例（pending/running）：
 ```json
-{"pid": 12345, "running": true, "exit_code": null, "message": "Process 12345 is running."}
+{"pid": 12345, "running": true, "exit_code": null, "message": "status=running attempts=1/5"}
 ```
 
 响应示例（已完成）：
 ```json
-{"pid": 12345, "running": false, "exit_code": 0, "message": "Process 12345 finished with exit code 0."}
+{"pid": 12345, "running": false, "exit_code": 0, "message": "status=done attempts=1/5"}
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `pid` | int | 后台进程 PID |
-| `running` | bool | 是否仍在运行 |
-| `exit_code` | int \| null | 退出码,running=true 时为 null;0 表示成功,非 0 表示失败 |
-| `message` | string | 人类可读的状态描述 |
-
-**判定方式**：通过 `running` 字段判断,而非 `status`。完成后再用 `exit_code` 判定成败。
+| `pid` | int | Queue job_id（不是 OS PID） |
+| `running` | bool | `pending` 或 `running` 状态时为 true |
+| `exit_code` | int \| null | `done` 时为 0；其他状态为 null |
+| `message` | string | `status=<status> attempts=<n>/<max>`，失败时附 last_error |
 
 ```bash
-# 正确轮询示例
-until ! curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}" | python3 -c "import json,sys; sys.exit(0 if json.load(sys.stdin).get('running') else 1)"; do
+# 推荐轮询示例（每 5 秒一次）
+until ! curl -sS "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}" | python3 -c "import json,sys; sys.exit(0 if json.load(sys.stdin).get('running') else 1)"; do
   sleep 5
 done
+```
+
+### GET /jobs
+
+列出队列内容，可按 `status` 和 `container` 过滤。用于排障"为什么我的索引还没好"。
+
+```bash
+curl -sS "${ENDPOINT}/jobs?status=pending&limit=20" -H "X-API-KEY: ${API_KEY}"
+```
+
+| 查询参数 | 说明 |
+|------|------|
+| `status` | `pending` / `running` / `done` / `failed` / `cancelled` |
+| `container` | 精确匹配容器名 |
+| `limit` | 1–500，默认 50 |
+
+响应包含 `jobs`（任务列表）、`stats`（按状态计数）、`worker_running`（worker 是否在跑）。
+
+### DELETE /jobs/{job_id}
+
+取消一个 `pending` 任务。`running`/`done` 等其他状态会返回 409。
+
+```bash
+curl -sS -X DELETE "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
+```
+
+### GET /admin/system-health
+
+运维诊断端点：返回宿主机内存/load 快照、当前 GATE 配置、所有活跃后台进程明细。用于回答"为什么 ingest 被拒"或"系统是否在压力下"。
+
+```bash
+curl -sS "${ENDPOINT}/admin/system-health" -H "X-API-KEY: ${API_KEY}" | jq
 ```
 
 ## 读取配置的辅助方法
