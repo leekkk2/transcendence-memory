@@ -140,6 +140,39 @@ curl -sS -X POST "${ENDPOINT}/search" \
 
 > 跨容器响应里每条 hit 会带 `container` 字段，并附 `containers` / `per_container_status` 用于诊断。`topk` 是合并后的全局上限，不是每容器独立。
 
+#### Response schema (实测速查)
+
+`/search` 顶层返回的命中数组字段名是 **`results`**（不是 `hits`），每条命中的字段如下：
+
+```json
+{
+  "status": "ok",
+  "results": [
+    {
+      "score": 0.56,
+      "container": "yzjx",
+      "taskId": "<source-task>",
+      "chunkId": "<taskId>#client-ingest#<idx>",
+      "docType": "client_ingest",
+      "sourcePath": "tasks/rag/containers/<container>/memory_objects.jsonl",
+      "section": "client_ingest",
+      "title": "",
+      "source": "",
+      "text": "...",
+      "tags": [],
+      "metadata": {}
+    }
+  ]
+}
+```
+
+**关键解析约定**：
+
+- 每条命中**没有顶级 `id` 字段**。`/ingest-memory/objects` 时给的 `id` 字段不会原样回流到 `results[].id`；下游需要按 `taskId + chunkId` 或 `text` 内容自行匹配
+- 同一条 ingest 的长文本**会被切成多个 chunks**（`chunkId` 末尾 `#<idx>` 是切片序号）；search 可能返回多条同 `taskId` 的不同 chunk
+- `title` 字段在多数情况下为空 `""`，即使 ingest 时显式给了；以 `text` 头几行为准
+- 详细字段定义见 [`references/api-reference.md` §POST /search](./references/api-reference.md#post-search)
+
 ### Command: `remember`
 
 Quickly store one memory with an auto-generated ID and automatic embedding:
@@ -375,6 +408,9 @@ Common quick checks:
 - **Document upload fails**: verify file type and size (PDF, image, Markdown)
 - **Query returns empty**: make sure content was ingested via `/documents/text` or `/documents/upload`
 - **Updates or deletes not visible**: run `/tm embed` to refresh
+- **search 返回里找不到我刚 ingest 时给的 `id` 字段**: client 给的 `id` 不会作为 `results[].id` 回流；按 `taskId` + `chunkId` 或 `text` 头几行匹配（详见 §Command: search → Response schema）
+- **同一条长 memory ingest 后 search 返回多条同 `taskId` 的 chunk**: 这是 RAG 正常的切片行为；按 `chunkId` 末尾 `#<idx>` 区分
+- **`/jobs/{pid}` polling 用 `.status` 取不到值**: 响应**没有顶级 `status` 字段**，用 `running` / `exit_code` 判定（见 §Persistent Queue 表）
 
 ## Batch and Async Operations
 
@@ -409,6 +445,13 @@ curl -sS -X POST "${ENDPOINT}/embed" \
 
 # Look up a job (the `pid` field carries the queue job_id since v0.5.10)
 curl -sS "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}"
+# → {"pid":<id>,"running":<bool>,"exit_code":<int|null>,"message":"status=<state> attempts=<n>/<max>"}
+
+# Recommended: poll until done by checking `running` (NOT a `status` top-level field)
+until ! curl -sS "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}" \
+  | python3 -c "import json,sys; sys.exit(0 if json.load(sys.stdin).get('running') else 1)"; do
+  sleep 5
+done
 
 # List pending/running/failed jobs to triage backlog
 curl -sS "${ENDPOINT}/jobs?status=pending" -H "X-API-KEY: ${API_KEY}"
@@ -416,6 +459,15 @@ curl -sS "${ENDPOINT}/jobs?status=pending" -H "X-API-KEY: ${API_KEY}"
 # Cancel a pending job
 curl -sS -X DELETE "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}"
 ```
+
+`/jobs/{job_id}` 响应 schema（实测速查）：
+
+| field | type | meaning |
+|---|---|---|
+| `pid` | int | queue job_id (NOT OS pid since v0.5.10) |
+| `running` | bool | true while pending or running |
+| `exit_code` | int \| null | 0 on success; null otherwise |
+| `message` | string | `"status=<state> attempts=<n>/<max>"`（status 是字符串，**没有顶级 `status` 字段** — 用 `running` / `exit_code` 判定）|
 
 Failures auto-retry with exponential backoff (30s → 60s → 120s → 5min → 15min, max 5 attempts)
 before transitioning to a permanent `failed` status. No client-side retry logic needed.
