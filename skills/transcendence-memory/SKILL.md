@@ -371,142 +371,29 @@ Or run `/tm connect --manual` and enter the values step by step.
 
 > After configuration is complete, `references/setup.md` no longer needs to be loaded into context.
 
-## API Reference
+## Reference Documents
 
-See `references/api-reference.md` for full request and response formats.
-
-### Lightweight Path (text memory CRUD)
-
-| Endpoint | Method | Purpose | Auth |
-|------|------|------|------|
-| `/health` | GET | Health check | Not required |
-| `/search` | POST | Search memories | Required |
-| `/embed` | POST | Rebuild index | Required |
-| `/ingest-memory/objects` | POST | Write typed objects | Required |
-| `/ingest-memory/contract` | GET | Inspect ingest semantic boundaries | Not required |
-| `/ingest-structured` | POST | Ingest structured JSON | Required |
-| `/containers/{container}/memories/{id}` | PUT | Update a memory | Required |
-| `/containers/{container}/memories/{id}` | DELETE | Delete a memory | Required |
-
-### Multimodal Path (RAG-Anything pipeline)
-
-| Endpoint | Method | Purpose | Auth |
-|------|------|------|------|
-| `/documents/text` | POST | Ingest text into the knowledge graph | Required |
-| `/documents/upload` | POST | Upload PDF, image, or Markdown documents | Required |
-| `/query` | POST | Run a multimodal RAG query | Required |
-
-### Administrative Endpoints
-
-| Endpoint | Method | Purpose | Auth |
-|------|------|------|------|
-| `/containers` | GET | List containers | Required |
-| `/containers/{name}` | DELETE | Delete a container | Required |
-| `/export-connection-token` | GET | Export a connection token | Required |
-| `/jobs/{pid}` | GET | Async job status | Required |
-
-Authentication methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`
-
-## Architecture Overview
-
-See `references/ARCHITECTURE.md`.
-
-```text
-Agent --HTTPS + API Key--> transcendence-memory-server
-                            |-- FastAPI HTTP layer
-                            |-- Container isolation
-                            |-- Lightweight path: /search + /ingest + /embed
-                            |   `-- Embedding -> LanceDB vector store
-                            `-- Multimodal path: /documents + /query
-                                `-- RAG-Anything -> knowledge graph -> LLM answer
-```
-
-## Troubleshooting
-
-See `references/troubleshooting.md`.
-
-Common quick checks:
-- **Cannot connect**: run `/tm status` or `curl -sS "${ENDPOINT}/health"`
-- **401/403**: verify that the API key is correct
-- **Search returns empty**: run `/tm embed` first to rebuild the index
-- **Search returns 200 but body contains error / empty after `/tm remember`**: upstream embedding may be rate-limited (server v0.5.2+ auto-retries with backoff); check `/jobs/{pid}` then see `references/troubleshooting.md`
-- **Document upload fails**: verify file type and size (PDF, image, Markdown)
-- **Query returns empty**: make sure content was ingested via `/documents/text` or `/documents/upload`
-- **Updates or deletes not visible**: run `/tm embed` to refresh
-- **search 返回里找不到我刚 ingest 时给的 `id` 字段**: client 给的 `id` 不会作为 `results[].id` 回流；按 `taskId` + `chunkId` 或 `text` 头几行匹配（详见 §Command: search → Response schema）
-- **同一条长 memory ingest 后 search 返回多条同 `taskId` 的 chunk**: 这是 RAG 正常的切片行为；按 `chunkId` 末尾 `#<idx>` 区分
-- **`/jobs/{pid}` polling 用 `.status` 取不到值**: 响应**没有顶级 `status` 字段**，用 `running` / `exit_code` 判定（见 §Persistent Queue 表）
-
-## Batch and Async Operations
-
-### Bulk Ingest (large memory sets)
-
-When you need to ingest dozens to thousands of memories:
-
-```bash
-# 基本用法
-/tm batch memories.jsonl
-
-# 大规模入库推荐：探测 contract + 脱敏 + 断点续传
-python3 <skill-path>/scripts/batch-ingest.py \
-  "${ENDPOINT}" "${API_KEY}" "${CONTAINER}" memories.jsonl \
-  --probe --redact --resume --max-bytes 500000
-```
-
-The script batches by both count and byte size, uses WAF-compatible headers, auto-splits on 413, supports secrets redaction, contract probing, resume, and failed-object logging. Zero external dependencies.
-
-### Persistent Queue (v0.5.10+)
-
-`/embed`, `/ingest-memory`, and `/ingest-structured` all enqueue into a SQLite-backed queue
-that survives server restarts. A single background worker drains jobs slowly so
-heavy ingest never overloads the host. Duplicate enqueues for the same `(op, container)`
-coalesce into one pending job.
-
-```bash
-# Enqueue an embed job (default mode — returns immediately with a job_id)
-curl -sS -X POST "${ENDPOINT}/embed" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"container":"${CONTAINER}"}'
-
-# Look up a job (the `pid` field carries the queue job_id since v0.5.10)
-curl -sS "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}"
-# → {"pid":<id>,"running":<bool>,"exit_code":<int|null>,"message":"status=<state> attempts=<n>/<max>"}
-
-# Recommended: poll until done by checking `running` (NOT a `status` top-level field)
-until ! curl -sS "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}" \
-  | python3 -c "import json,sys; sys.exit(0 if json.load(sys.stdin).get('running') else 1)"; do
-  sleep 5
-done
-
-# List pending/running/failed jobs to triage backlog
-curl -sS "${ENDPOINT}/jobs?status=pending" -H "X-API-KEY: ${API_KEY}"
-
-# Cancel a pending job
-curl -sS -X DELETE "${ENDPOINT}/jobs/${JOB_ID}" -H "X-API-KEY: ${API_KEY}"
-```
-
-`/jobs/{job_id}` 响应 schema（实测速查）：
-
-| field | type | meaning |
+| Topic | File | When to load |
 |---|---|---|
-| `pid` | int | queue job_id (NOT OS pid since v0.5.10) |
-| `running` | bool | true while pending or running |
-| `exit_code` | int \| null | 0 on success; null otherwise |
-| `message` | string | `"status=<state> attempts=<n>/<max>"`（status 是字符串，**没有顶级 `status` 字段** — 用 `running` / `exit_code` 判定）|
+| Full HTTP API (request / response / error schemas) | [`references/api-reference.md`](./references/api-reference.md) | When you need exact field types |
+| Architecture (dual-path model, container isolation, multi-embedding routing) | [`references/ARCHITECTURE.md`](./references/ARCHITECTURE.md) | When understanding how it works internally |
+| Troubleshooting (connect / 401 / 403 / empty search / empty query / WAF 403) | [`references/troubleshooting.md`](./references/troubleshooting.md) | When something doesn't work |
+| Operations (bulk ingest, persistent queue, automatic memory, platform support, multi-embedding ops) | [`references/OPERATIONS.md`](./references/OPERATIONS.md) | When operating at scale |
+| Best practices (two-path model, dedicated containers, dual-track embeddings) | [`references/best-practices.md`](./references/best-practices.md) | Before designing memory layout |
 
-Failures auto-retry with exponential backoff (30s → 60s → 120s → 5min → 15min, max 5 attempts)
-before transitioning to a permanent `failed` status. No client-side retry logic needed.
+Auth methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`.
 
-### Choosing an Operation Mode
+### Common quick checks
 
-| Scenario | Recommended approach |
-|------|---------|
-| Health checks, single searches, or a few memory writes | Built-in `/tm` commands |
-| Bulk ingest of dozens to thousands of memories | `/tm batch file.jsonl --probe --redact` |
-| Large-scale ingest with sensitive content | Add `--redact --resume --failed-log` |
-| Rebuilding a large container index | `/tm embed` or async mode |
-| Adding documents to the knowledge graph | `/tm upload file.pdf` or `/documents/text` |
-| Asking for an LLM-synthesized answer | `/tm query your question` |
+- **Cannot connect** → `/tm status` or `curl -sS "${ENDPOINT}/health"`
+- **401 / 403** → verify API key
+- **`/search` empty** → run `/tm embed` first to rebuild the index
+- **`/query` empty** → only `/documents/text` / `/documents/upload` populate the KG; if you only used `/tm remember`, dual-write (see best-practices §1.2)
+- **Updates / deletes not visible** → `/tm embed` to refresh
+- **Cannot find my `id` in search results** → client `id` is not echoed in `results[].id`; match by `taskId` + `chunkId` or text content
+- **`/jobs/{pid}` `.status` returns nothing** → there is no top-level `status` field; use `running` / `exit_code` instead
+
+Full troubleshooting matrix lives in [`references/troubleshooting.md`](./references/troubleshooting.md). Bulk ingest / persistent queue / `/jobs/{id}` polling / automatic memory / platform support details all live in [`references/OPERATIONS.md`](./references/OPERATIONS.md).
 
 ### Command: `upgrade`
 
@@ -569,74 +456,6 @@ else
   echo "Not connected. Run /tm connect first."
 fi
 ```
-
-## Automatic Memory
-
-transcendence-memory uses four lifecycle hooks for a fully automatic memory experience. Writing memories requires `auto-memory.enabled`; reading and injecting memories requires only `config.toml` (read-write separation).
-
-### How it works
-
-| Hook | Event | Requires auto-memory | What it does |
-|------|-------|---------------------|--------------|
-| `session-start` | SessionStart | No (read-only) | Health check + recall relevant memories from previous sessions and inject into context |
-| `prompt-inject` | UserPromptSubmit | Keyword: No / Long prompt: Yes | Trigger on recall keywords or long prompts; inject relevant memories before agent responds |
-| `post-commit-memory` | PostToolUse (Bash) | Yes | After git commit/merge/rebase, instruct agent to store a commit summary memory |
-| `session-stop` | Stop | Yes | Extract last 3 assistant messages from transcript and store as session-summary memory (5-minute throttle) |
-
-All four hooks are installed automatically via `/plugin install transcendence-memory`.
-
-### Enable / disable
-
-```text
-/tm auto on       # enable auto-memory (writing: PostToolUse + Stop hooks)
-/tm auto off      # disable auto-memory
-/tm auto status   # check current configuration
-```
-
-Memory recall via SessionStart and UserPromptSubmit (keyword mode) works independently of `auto-memory` — they only need a configured `config.toml`.
-
-### What gets stored
-
-**Auto-commit memory** (PostToolUse):
-```
-[commit abc1234] fix: resolve port conflict in docker-compose | files: M docker-compose.yml, M .env.example
-```
-Tagged `auto-commit` for easy filtering: `/tm search auto-commit`
-
-**Session summary memory** (Stop):
-```
-[session-summary] project:my-project | 2026-04-30T12:00:00Z | <last 3 assistant messages>
-```
-Tagged `auto-session` + `summary` for filtering: `/tm search session-summary`
-
-## Platform Support
-
-The hooks system is designed to work across multiple AI coding CLIs. The plugin ships pre-built hook configs for supported platforms.
-
-### Claude Code (primary)
-
-Hooks are registered in `hooks/hooks.json` and activated automatically when the plugin is installed via `/plugin install`.
-
-### Cursor
-
-Uses `hooks/hooks-cursor.json` with camelCase event names (`sessionStart`, `postToolUse`).
-
-### Other platforms
-
-The multi-platform adapter (`hooks/adapter.py`) normalizes hook input from:
-
-| Platform | Event format | Detection |
-|----------|-------------|-----------|
-| Claude Code | `hook_event_name` + `tool_name` | `CLAUDE_PLUGIN_ROOT` env |
-| Cursor | Same JSON schema | `CURSOR_PLUGIN_ROOT` env |
-| Gemini CLI | `AfterTool` + `matcher` | `matcher` field in JSON |
-| Windsurf | `post-tool-use` + `tool` + `arguments` | `arguments` field in JSON |
-| Vibe CLI | `post-tool-call` + `tool` + `input` | `input` field in JSON |
-| Cline / Roo Code | `tool_name` or `tool` + JSON stdin/stdout | JSON structure detection |
-| Copilot CLI | Claude Code compatible | `COPILOT_CLI` env |
-| Augment Code | Claude Code compatible | Fallback to Claude format |
-
-For platforms without native hook support, add transcendence-memory instructions to the platform's rules file (e.g., `.cursorrules`, `AGENTS.md`, `.clinerules/`).
 
 ## Files in This Skill
 
