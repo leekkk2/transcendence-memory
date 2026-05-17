@@ -122,11 +122,65 @@ api_key = "sk-xxx"                       # API 密钥
 
 | 模型用途 | 默认模型 | 说明 |
 |---------|---------|------|
-| Embedding | gemini-embedding-001 (dim=3072) | 文本向量化 |
+| Embedding (default) | gemini-embedding-001 (dim=3072) | 文本向量化（双轨默认）|
+| Embedding (alt) | text-embedding-3-small (dim=1024) | `*_openai` 命名的 container 走这条 |
 | LLM | gemini-2.5-flash | `/query` 生成答案 |
 | VLM | qwen3-vl-plus | 图片/PDF 视觉理解 |
 
-所有模型通过统一 endpoint（如 `https://api.openai.com/v1` 或兼容 API）调用。如需调整模型配置，修改服务端 `.env` 中对应的 `*_BASE_URL` 变量。
+LLM/VLM 仍由 `.env` 中 `LLM_MODEL` / `LLM_BASE_URL` / `VLM_*` 变量驱动；
+embedding/reranker 自 v0.7.0+ 改由 `config/profiles.yaml` + routes 表声明式管理。
+
+### Server 端 Multi-Embedding 配置（v0.7.0+，可选）
+
+如部署多个 embedding profile（如 default Gemini + fallback OpenAI），在
+server 端编辑 `config/profiles.yaml`（路径可由 `TM_PROFILES_FILE` env 覆盖）：
+
+```yaml
+version: 1
+embeddings:
+  - name: gemini-3072            # 主路径
+    provider: openai_compatible
+    model: gemini-embedding-001
+    dim: 3072
+    base_url: https://newapi.example.com/v1
+    api_key_env: EMBEDDING_API_KEY    # ← 间接引用，yaml 不存 secret
+    max_token_size: 8192
+  - name: openai-small-1024       # 备/对比/双轨
+    provider: openai_compatible
+    model: text-embedding-3-small
+    dim: 1024
+    base_url: https://newapi.example.com/v1
+    api_key_env: EMBEDDING_API_KEY
+rerankers:
+  - name: selfhosted-bge
+    provider: cohere_compatible
+    model: text-reranker
+    base_url: https://newapi.example.com/v1
+    api_key_env: EMBEDDING_API_KEY
+routes:
+  - match: {glob: "*_openai"}     # 镜像 container 命名约定
+    embedding: openai-small-1024
+  - match: {default: true}
+    embedding: gemini-3072
+    reranker: selfhosted-bge
+    rerank: {enabled: false}      # per-call 启用
+```
+
+**重要**：`api_key_env` 是间接引用，实际密钥写在 docker-compose `.env` /
+systemd EnvironmentFile，**yaml 永远不直接含 secret**。
+
+> 💡 **shared vs per-profile key**：上例两个 profile 复用同一个 `EMBEDDING_API_KEY`（首次配置最简，与 eva 生产一致）。**生产推荐 per-profile key 隔离 quota** —— 比如 `gemini-3072` 用 `GEMINI_API_KEY`，`openai-small-1024` 用 `OPENAI_API_KEY`，避免一个 profile 触发 rate limit 时拖累另一个；server 内置 `config/profiles.yaml.example` 用的就是 per-profile 命名。
+
+验证 server 已加载：
+```bash
+curl -sS -H "X-API-KEY: ${API_KEY}" "${ENDPOINT}/admin/profiles" | jq '.embeddings[].name, .routes[].match'
+# 探活单条 profile（latency + 实测 dim）
+curl -sS -X POST -H "X-API-KEY: ${API_KEY}" "${ENDPOINT}/admin/probe-embedding?profile=openai-small-1024"
+# {"ok": true, "profile": "openai-small-1024", "latency_ms": 885, "dim": 1024, "breaker_reset": false}
+```
+
+**无 profiles.yaml 时**：server 自动合成 legacy profile 走 v0.6.x 单 embedding 行为，
+完全向后兼容旧 `.env` 部署。
 
 ### 安全说明
 

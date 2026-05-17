@@ -2,6 +2,8 @@
 
 ## 双轨架构总览
 
+> 下图中的 VLM/LLM/Embedding **model 名是 eva 主机当前默认 profile**，并非硬编码——v0.7.0+ 起所有模型可由 server 端 `config/profiles.yaml` 替换；LLM/VLM 仍由 `.env` 驱动。详见 §模型配置（Server 端）段。
+
 ```
 ┌──────────────────────────┐
 │  AI Agent (Claude Code)  │
@@ -62,13 +64,52 @@
 
 ## 模型配置（Server 端）
 
-| 用途 | 模型 | 说明 |
-|------|------|------|
-| Embedding | gemini-embedding-001 (dim=3072) | 向量化，双轨共用 |
-| LLM | gemini-2.5-flash | `/query` 答案生成 |
-| VLM | qwen3-vl-plus | 图片/PDF 视觉理解 |
+### v0.7.0+ Multi-Embedding 路由
 
-所有模型在 server 端配置，通过统一 API endpoint 调用。Skill 端用户无需配置模型。
+Server 不再绑死单一 embedding 模型。所有 embedding / reranker profile 在
+`config/profiles.yaml` 声明，按 container 名经 routes 表自动路由：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  config/profiles.yaml                                       │
+│  ├─ embeddings: [gemini-3072, openai-small-1024, ...]       │
+│  ├─ rerankers:  [selfhosted-bge, cohere-v3, ...]            │
+│  └─ routes:                                                  │
+│       glob "*_openai"  → openai-small-1024 (dim=1024)        │
+│       exact "default"     → gemini-3072 + fallback openai-3072  │
+│       default          → gemini-3072 (无 reranker)           │
+└─────────────────┬───────────────────────────────────────────┘
+                  ▼
+        EmbeddingRegistry.resolve(container)
+                  ▼
+        LightRAG instance (cache key = container + route_sig)
+                  ▼
+        LanceDB chunks（行带 embedding_model/dim/profile metadata）
+```
+
+**关键性质**：
+- **同名 container 维度锁死**：第一次写入决定该 container 的 vec 维度，
+  后续不可换 dim profile（否则 LanceDB schema mismatch 报错）。
+- **双轨并运**：通过命名约定（如 `home` + `home_openai`）让同一份知识在两个
+  embedding 空间各存一份，调用方按 container 选模型。
+- **fallback 链**：v0.9.0+ embeddings 支持 `embedding_fallbacks`（必须同 dim），
+  上游 429/quota 时自动切换；per-profile circuit breaker 防雪崩。
+- **per-request override**：所有 ingest/search/query 端点接受可选
+  `embedding_model` 字段，强制使用指定 profile（覆盖 container route）。
+
+### 现役默认 profile
+
+| 用途 | 模型 | dim | 说明 |
+|------|------|-----|------|
+| Embedding (default) | gemini-embedding-001 | 3072 | 双轨默认 |
+| Embedding (alt) | text-embedding-3-small | 1024 | `*_openai` 命名走这条 |
+| Reranker | text-reranker (Cohere-compatible) | — | 默认配但不开，per-call 启用 |
+| LLM | gemini-2.5-flash | — | `/query` 答案生成 |
+| VLM | qwen3-vl-plus | — | 图片/PDF 视觉理解 |
+
+所有 profile 在 server 端配置，通过统一 OpenAI-compatible API endpoint 调用。
+Skill 端用户**只需选 container 名**即自动路由；如需查 profile/route 全貌：
+`GET /admin/profiles`（需鉴权）。
 
 ## 职责边界
 

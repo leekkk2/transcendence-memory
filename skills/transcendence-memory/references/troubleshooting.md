@@ -16,7 +16,15 @@ curl -sS -i "${ENDPOINT}/health"
 
 ## 通用问题
 
-### health 返回空容器列表
+### 怎么查容器列表
+
+公开 `/health` **不再**包含容器清单（防止匿名访问者枚举租户/项目名）。需要时用：
+
+```bash
+curl -sS "${ENDPOINT}/admin/system-health" -H "X-API-KEY: ${API_KEY}" | jq .available_containers
+# 或更轻量的专用端点：
+curl -sS "${ENDPOINT}/containers" -H "X-API-KEY: ${API_KEY}"
+```
 
 `available_containers: []` 是正常的 — 容器在首次写入数据时按需创建。新部署的 server 没有任何容器。
 
@@ -411,3 +419,93 @@ rm -rf ~/.transcendence-memory
 ```
 
 然后重新按 `references/setup.md` 操作。
+
+## Multi-Embedding / dim mismatch（v0.7.0+）
+
+### "query dim X doesn't match the column vector dim Y" lance error
+
+**症状**：`/search` 或 `/query` 返回 `code: 1`，stderr 含
+`lance error: Invalid user input: query dim(3072) doesn't match the column vector vector dim(1024)`。
+
+**根因**（按概率排序）：
+1. **container 名 vs route 不匹配**：第一次写入用了 default 3072，后来想换 1024；或反之
+2. **server v0.7.0–v0.10.1 老版本 bug**：subprocess 缺 `CONTAINER` env → 退化到 default route。
+   - v0.10.1 修了**异步** JobWorker 子进程路径（影响 `/ingest-memory` 等队列驱动端点）
+   - v0.10.2 才补全**同步** `task_rag_server.run()` 路径（影响 `/search` `/embed` `/build-manifest` 等同步端点）
+   - 完整修复需服务端 **v0.10.2+**；只升 v0.10.1 时 multi-route 仍半瘫（同步端点继续走 default route）
+3. **per-request `embedding_model` 与 container 实际 dim 错配**：override 了一个不同 dim 的 profile
+
+**判定**：
+```bash
+# 看 server 路由当前 container 走哪个 profile
+curl -sS -H "X-API-KEY: ${KEY}" "${ENDPOINT}/admin/profiles" | jq '.routes, .default_route'
+
+# 探活该 profile 实际 dim
+curl -sS -X POST -H "X-API-KEY: ${KEY}" "${ENDPOINT}/admin/probe-embedding?profile=<name>"
+# {"ok": true, "dim": 1024}  # 与表 dim 必须一致
+```
+
+**修复**：
+- 不要试图换 dim 复用同名 container（dim 锁死铁律，见 best-practices §6.3）
+- 真要换 dim：用 server `scripts/migrate_embeddings.py`（in-place 替换 + 旧表自动备份为 chunks_old_<ts>）
+- 想双轨并存：新建一个 `<container>_openai` clone（用 clone 工具或重新 ingest）
+
+### `/admin/probe-embedding` 返回 `ok: false`
+
+| error message 关键字 | 含义 | 修复 |
+|---|---|---|
+| `embedding upstream 503` / `429` | 上游 quota / rate limit | 等 5 分钟 retry；或配 fallback 链 |
+| `EmbeddingProfile ... not found` | profiles.yaml 未声明该 profile | 检查 yaml 拼写 + reload |
+| `breaker_open: True` | per-profile circuit breaker 跳开 | `POST /admin/probe-embedding?profile=X` 探活成功即重置 |
+
+### 行级查询 `metadata.embedding_model` 永远拿不到
+
+**症状**：审计脚本读 `json.loads(row['metadata'])['embedding_model']` 返回 None / KeyError。
+
+**根因**：v0.7.0+ chunks 表把 embedding 归属设计为**顶级 LanceDB 列**（`embedding_model` / `embedding_dim` / `embedding_profile`），不在业务 `metadata` JSON 内。`metadata` 是 client ingest 时给的 dict，不会被 ingest pipeline / clone 工具修改。
+
+**正确取法**：
+```python
+df = t.to_pandas()
+df[['chunkId', 'embedding_model', 'embedding_dim', 'embedding_profile']].head()
+# 或
+df['embedding_model'].value_counts()
+```
+
+详见 `references/OPERATIONS.md` "行级 embedding 归属查询" 段。
+
+### Per-request `embedding_model` override 不生效
+
+- 必须 server v0.7.0+。检查 `/health` `accepting_ingest: true` + `/admin/profiles` 能列出 routes
+- override 名必须存在于 `/admin/profiles.embeddings[].name`
+- override 的 dim 必须与 container 已有表的 dim 一致，否则报上面的 lance error
+
+### Reranker 配置了但永远不生效
+
+reranker 是个 silent feature — 3 个独立前置全满足才会触发，缺任一项零报错就被跳过：
+
+| 层 | 前置条件 | 怎么验证 |
+|---|---|---|
+| **配置** | route 的 `reranker: <name>` 不为 null **且** `rerank.enabled: true`（或单次 body 带 `"rerank": true`）| `curl $SRV/admin/profiles` 看 route 的 `reranker` / `rerank_enabled` |
+| **数据** | 内容是通过 `POST /documents/text` 或 `POST /documents/upload` 入库的（RAG-Anything 知识图谱路径）| `ls /data/tasks/rag/containers/<C>/kv_store_*.json` 存在 |
+| **流量** | 客户端调用的是 `POST /query`（不是 `POST /search`）| server access log 是 `/query` 还是 `/search` |
+
+任一前置缺失 → reranker 静默不触发：
+
+- `POST /search` 是 **LanceDB 直查 cosine + topk**，永远不调 reranker
+- 仅通过 `POST /ingest-memory/objects` / `/tm remember` 写入的 container 是 LanceDB-only，`/query` 返回 `(no answer generated)`，reranker 无 chunk 可排
+- route `rerank.enabled: false`（默认值）+ 请求 body 也没传 `"rerank": true` → 不触发
+
+### 客户端代码用 `enable_rerank` 字段没反应
+
+**症状**：客户端 body 设了 `{"enable_rerank": true}`，server 完全没调 reranker，也没报错。
+
+**根因**：字段名错了。正确字段是 `rerank: bool`，不是 `enable_rerank`。`QueryReq` 是 Pydantic strict 模型，**静默丢弃未知字段**，不会报错。
+
+```bash
+# 错（reranker 不触发，无 warning）
+... -d '{"container":"X","query":"...","enable_rerank":true}'
+
+# 对
+... -d '{"container":"X","query":"...","rerank":true}'
+```
