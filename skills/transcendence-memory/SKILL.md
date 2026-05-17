@@ -162,7 +162,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
   -d "{\"container\":\"${CONTAINER}\",\"query\":\"${QUERY}\",\"topk\":5,\"union\":true}"
 ```
 
-> 自定义 per-container timeout（默认 3.0s，范围 0.5–30）：加 `\"per_container_timeout_s\":5.0`。
+> 自定义 per-container timeout（v0.11.1+ 默认 12.0s，范围 0.5–30）：加 `\"per_container_timeout_s\":5.0`。生产端 subprocess cold-start 实测 5-10s（py + lancedb + lightrag import + table load + embed call），v0.12 in-process 化后可降回 3s。
 > 显式 `containers` / `container_pattern` 参数会跳过自动 union（用户已掌控全部目标）。
 
 #### Response schema (实测速查)
