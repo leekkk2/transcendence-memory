@@ -509,3 +509,34 @@ reranker 是个 silent feature — 2 个独立前置全满足才会触发：
 # 对
 ... -d '{"container":"X","query":"...","rerank":true}'
 ```
+
+### Reranker upstream 返回 400 `model_price_error` / `model_not_found`
+
+**症状**：server log 出现 `ERROR: Error during reranking: 400 ... /v1/rerank`。LightRAG 静默吞错，`/query` answer 仍返回但**实际未经 rerank**（fallback 原序）。
+
+**根因**：`rerankers[].model` 是网关不认识的 id。OpenAI-compat aggregator（newapi / one-api / litellm）只接受**已注册成 channel 的 model id**，臆造名字（`text-reranker`、profile 自身的 name 等）直接 400。
+
+**修法（两选一）**：
+
+1. 网关注册了**真正的 reranker channel**（cross-encoder 类） → `model` 改成那个 channel 实际注册的 model id（具体 id 由 gateway admin 决定）。
+2. 网关只有 **embedding channel**（最常见的轻量部署） → `model` 改成你网关上**任何**一个 embedding model id。网关会把 `/v1/rerank` 路由成 embedding-cosine pseudo-rerank，返回合法 Cohere-v2 schema。质量边界：擅长分"最相关 vs 噪声"；小候选集（≤ 10 doc）退化为 binary classifier；顶级 ranking 仍需真 cross-encoder。
+
+直接探活（不走 server）：
+
+```bash
+curl -sS -X POST "$GATEWAY/v1/rerank" -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"<your-embedding-or-rerank-model-id>","query":"x","documents":["a","b"],"top_n":2}'
+```
+
+改 `profiles.yaml` 后**必须** `docker compose up -d --force-recreate --pull never`（profiles registry 是 module-level singleton，只在 server 启动时 load 一次，`restart` 不重读 YAML）。验证：`curl $SRV/admin/profiles` 看 `rerankers[].model`。
+
+### `/query` 报 `AssertionError: Embedding dim mismatch, expected: X, but loaded: Y`
+
+**症状**：单 server 上某 container `/query` 500，nano_vectordb `AssertionError`。同 server 其他 dim 一致的 container 正常。
+
+**根因**：LightRAG NanoVectorDB 当前在 `<server-data-root>/` 顶层共享 `vdb_*.json` / `graph_*.graphml` / `kv_store_*.json`，**不按 container 隔离**。第一个跑 `/query` 的 container 用自己的 dim 锁住这些文件，后续不同 dim container 全部撞 assertion。
+
+**短期 workaround**：备份 + 清空全局文件让 LightRAG 重建（**会清空所有 container 共享的 KG**，下次 ingest 重抽 entity/relation）。详见 server 仓库 `docs/operations/known-issue-global-vdb-isolation.md`。
+
+**避免触发**：单 server 不混用多 dim container 走 `/query`。`POST /search` 不受影响（直查 LanceDB，不加载 NanoVectorDB）。
