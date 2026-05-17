@@ -482,19 +482,19 @@ df['embedding_model'].value_counts()
 
 ### Reranker 配置了但永远不生效
 
-reranker 是个 silent feature — 3 个独立前置全满足才会触发，缺任一项零报错就被跳过：
+reranker 是个 silent feature — 2 个独立前置全满足才会触发：
 
 | 层 | 前置条件 | 怎么验证 |
 |---|---|---|
 | **配置** | route 的 `reranker: <name>` 不为 null **且** `rerank.enabled: true`（或单次 body 带 `"rerank": true`）| `curl $SRV/admin/profiles` 看 route 的 `reranker` / `rerank_enabled` |
-| **数据** | 内容是通过 `POST /documents/text` 或 `POST /documents/upload` 入库的（RAG-Anything 知识图谱路径）| `ls /data/tasks/rag/containers/<C>/kv_store_*.json` 存在 |
-| **流量** | 客户端调用的是 `POST /query`（不是 `POST /search`）| server access log 是 `/query` 还是 `/search` |
+| **流量** | 客户端调用的是 `POST /query`（不是 `POST /search`）| server access log 是 `/query` 还是 `/search`；触发后 server log 应有 `Successfully reranked: N chunks from M original chunks` |
 
-任一前置缺失 → reranker 静默不触发：
+任一缺失 → reranker 静默不触发：
 
 - `POST /search` 是 **LanceDB 直查 cosine + topk**，永远不调 reranker
-- 仅通过 `POST /ingest-memory/objects` / `/tm remember` 写入的 container 是 LanceDB-only，`/query` 返回 `(no answer generated)`，reranker 无 chunk 可排
 - route `rerank.enabled: false`（默认值）+ 请求 body 也没传 `"rerank": true` → 不触发
+
+> **数据层不是前置**：reranker 作用于 LightRAG 返回的 chunks，与来源无关。LanceDB-only container（仅 `/tm remember` 写入）上调 `/query` 时，LightRAG hybrid mode 会自动 fallback 用 LanceDB 向量召回，reranker 仍正常工作。要拿更高质量 answer，可额外通过 `/documents/text` 入知识图谱（不强制）。
 
 ### 客户端代码用 `enable_rerank` 字段没反应
 
