@@ -106,7 +106,33 @@ Once content lives in a dedicated container, fetch it from any project with:
 /tm search --all "react-native-ota-hot-update"
 ```
 
-### 2.4 When to migrate
+### 2.4 Dual-track embeddings + automatic union (v0.11.0+)
+
+If your server runs **dual embedding tracks** (e.g. gemini-3072 primary + a sibling
+`<container>_openai` mirror with text-embedding-3-small / 1024 dims), enable
+`union_search_default: true` in `profiles.yaml`. Then a plain
+`/tm search` against `my-container` will automatically query both tracks and merge
+hits by `(taskId, chunkId)` dedup, giving you cross-track recall for free.
+
+```yaml
+# config/profiles.yaml
+union_search_default: true
+```
+
+When triggered, the response carries `union_applied: true` and lists both
+containers in `per_container_status`. If one track times out (default 3s), the
+other still returns with `degraded: true` — the query never fully fails because
+of a slow sibling.
+
+To opt out per request (e.g. when you want a single-track baseline for an
+eval):
+
+```bash
+/tm search "react native ota" --container my-container  # union as configured
+curl ... -d '{"container":"my-container","query":"X","union":false}'  # force single
+```
+
+### 2.5 When to migrate
 
 If a topic is being drowned in the default container, run a one-time migration:
 
