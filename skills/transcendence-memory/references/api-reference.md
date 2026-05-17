@@ -64,7 +64,9 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | `containers` | string[] | 否 | 显式列出多个容器，优先级最高 |
 | `container_pattern` | string | 否 | 模糊匹配容器名（大小写不敏感），优先级高于 `container` |
 | `pattern_mode` | string | 否 | `substring`（默认）/ `prefix` / `glob` |
-| `timeout_s` | int | 否 | 超时秒数（默认 600） |
+| `timeout_s` | int | 否 | subprocess 整体超时秒数（默认 600） |
+| `union` | bool | 否 | **v0.11.0+**：单 container 入参时是否自动追加 sibling `_openai` 镜像。`null`（默认）= 走 `profiles.yaml` 的 `union_search_default`；`true/false` 显式覆盖。`containers` / `container_pattern` 模式下被忽略 |
+| `per_container_timeout_s` | float | 否 | **v0.11.0+**：单容器子查询超时（0.5–30s，默认 3.0）。仅多容器场景启用；超时容器在 `per_container_status` 标记 `timeout`，不影响其余 |
 
 跨容器示例：
 
@@ -95,11 +97,24 @@ curl -sS -X POST "${ENDPOINT}/search" \
   "results": [
     {"container": "my-project", "score": 0.12, "text": "..."},
     {"container": "my-project_claude", "score": 0.18, "text": "..."}
-  ]
+  ],
+  "degraded": false,
+  "union_applied": false
 }
 ```
 
-**注意**：HTTP 200 不代表成功，需检查 body 是否包含错误；跨容器场景下检查 `per_container_status` 来定位部分失败的容器。
+**v0.11.0+ 新增字段**：
+- `degraded` (bool)：至少一个目标容器 `timeout` / `error` / `not_initialized` → `true`；结果不完整但已尽力合并
+- `union_applied` (bool)：单 container 查询自动追加 sibling `_openai` 镜像时为 `true`；客户端可借此区分主动 union 与显式 multi-container 调用
+- `per_container_status` 新增 `"timeout"` 取值（per-container 3s 超时）
+
+**自动 union 触发条件**（v0.11.0+）：
+- `union_search_default: true`（profiles.yaml 顶层）或单请求 `"union": true`
+- 入参只给 `container`（不给 `containers` / `container_pattern`）
+- 主容器名不以 `_openai` 结尾（避免镜像查镜像）
+- sibling `<container>_openai` 在 server 文件系统上已存在
+
+**注意**：HTTP 200 不代表成功，需检查 body；跨容器场景下检查 `per_container_status` 定位部分失败的容器，检查 `degraded` 判断结果完整性。
 
 ### POST /embed
 
