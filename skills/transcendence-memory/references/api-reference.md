@@ -2,34 +2,49 @@
 
 认证：所有业务端点需要 `X-API-KEY: <key>` 或 `Authorization: Bearer <key>`。
 
+> **v0.7.0+ multi-embedding 提示**：所有 `/embed` / `/ingest-*` / `/search` / `/query` 端点都接受**可选**字段 `embedding_model: str | None`（per-request 强制指定 embedding profile，覆盖默认路由）和 `rerank: bool | None` / `reranker_model: str | None`（v0.8.0+ 控制重排）。**不指定时按 container 名自动路由**，与 v0.6.x 行为完全兼容。详见末尾「Multi-Model 端点（v0.7.0+）」段。
+
 ---
 
 ## 轻量路径（文本记忆 CRUD）
 
 ### GET /health
 
-健康检查，无需认证。
+LB-style 公开健康检查，**无需认证**。日常用这个判断"服务还在不在 / 我能不能发请求"。
 
 ```bash
 curl -sS "${ENDPOINT}/health"
 ```
 
-响应包含（v0.5.10+ 新字段）：
+响应（公开字段集，刻意不含具体数值/路径/容器名/env key 名）：
 ```json
 {
+  "status": "ok",
+  "service": "transcendence-memory-server",
   "architecture": "lancedb-only",
-  "auth_configured": true,
-  "embedding_configured": true,
-  "runtime_ready": true,
-  "available_containers": ["home"],
-  "system": {"mem_available_mb": 1800, "load_per_cpu": 1.2, "swap_used_pct": 12.5},
+  "build_flavor": "lite",
+  "multimodal_capable": false,
+  "degraded_reasons": [],
+  "runtime_ready": {"search": true, "embed": true, "ingest_memory": true, "query": false, "documents_text": false},
   "accepting_ingest": true,
-  "queue_stats": {"pending": 3, "running": 1, "done": 42, "failed": 0, "cancelled": 0},
-  "worker_running": true
+  "worker_running": true,
+  "uptime_seconds": 12345,
+  "system_status": {"memory": "ok", "load": "ok", "swap": "ok"},
+  "warnings": []
 }
 ```
 
-`accepting_ingest=false` 表示宿主机当前在 GATE 设置的内存/load/swap 阈值之外，新 ingest 请求会拒绝；客户端应停止发送并退避。`queue_stats` 反映持久化队列里各状态的任务数。
+客户端通常只看：
+
+| 字段 | 含义 | 用法 |
+|---|---|---|
+| `status == "ok"` | 服务进程活着 | LB 探活 |
+| `accepting_ingest` | 准入门是否开放 | `false` 时立即退避，不要继续发送 ingest |
+| `runtime_ready.search` / `runtime_ready.query` | 该能力是否就绪 | 客户端选择走哪条 API |
+| `system_status` | 各维度压力标签 `ok` / `pressure` | 显示给用户"系统在压力中"，**不给精确数值** |
+| `warnings` | 已脱敏的可用性提示 | 日志展示用，例如 `"memory pressure"` 而非 `"available=747MB < 800MB"` |
+
+**安全设计**：`/health` 故意不暴露容器列表 / 阈值数值 / 配置 key 名 / 队列计数 / 绝对路径等。日常运行**不要**依赖这些字段，需要时调下面的 `/admin/system-health`（需鉴权）。
 
 ### POST /search
 
@@ -414,11 +429,126 @@ curl -sS -X DELETE "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
 
 ### GET /admin/system-health
 
-运维诊断端点：返回宿主机内存/load 快照、当前 GATE 配置、所有活跃后台进程明细。用于回答"为什么 ingest 被拒"或"系统是否在压力下"。
+运维诊断端点（**需鉴权**）。返回公开 `/health` 全部字段 + 全部敏感诊断信息：
+
+- `available_containers` — 容器/租户名清单
+- `configuration_guide` — 已配置 / 缺失 / 可选的 env key 名（如 `RAG_API_KEY`、`EMBEDDING_API_KEY`）
+- `modules.*.required_keys` / `missing_keys` — 各模块依赖明细
+- `scripts_present` / `workspace` / `containers_root` — 内部文件存在性、绝对路径
+- `system` — 完整资源快照（`cgroup_mem_limit_mb` / `cgroup_mem_available_mb` / `load_per_cpu` / `swap_used_pct`）
+- `thresholds`（与兼容字段 `gate_config` 同值）— 当前生效的 GATE 阈值
+- `queue_stats` — 队列各状态计数（`pending` / `running` / `done` / `failed` / `cancelled`）
+- `background_jobs` — 活跃后台进程明细（PID / container / label）
+- `admit_ok` / `admit_reason` — 准入门状态与原始原因
+- `warnings` — 完整原文（含触发阈值的精确数值，例如 `"available=747MB < threshold 800MB"`）
 
 ```bash
 curl -sS "${ENDPOINT}/admin/system-health" -H "X-API-KEY: ${API_KEY}" | jq
 ```
+
+**调用时机**：
+
+- 日常运行 → 用公开 `/health`
+- 排查 503 / `accepting_ingest=false` 时 → 用本端点拿数值与原因
+- 验证 env override 是否生效（`TM_MIN_AVAILABLE_MEM_MB` 等）→ 用本端点读 `thresholds`
+- 容器/租户清查 → 用本端点的 `available_containers`，不要去公开 `/health` 找
+
+## Multi-Model 端点（v0.7.0+）
+
+服务端 v0.7.0 起支持多 embedding profile + reranker profile，**插件式可配置**，不绑定特定 model。Profile 通过 server 端 `config/profiles.yaml` 声明，按 container 名自动路由。
+
+### GET /admin/profiles
+
+列出所有已配置的 embedding / reranker profile + route 表（**需鉴权**）。secret 自动 redact（`api_key_configured: bool`，不返回原值）。
+
+```bash
+curl -sS "${ENDPOINT}/admin/profiles" -H "X-API-KEY: ${API_KEY}" | jq
+```
+
+响应示例：
+```json
+{
+  "embeddings": [
+    {"name": "gemini-3072", "provider": "openai_compatible", "model": "gemini-embedding-001", "dim": 3072, "base_url": "https://...", "api_key_configured": true, "max_token_size": 8192, "request_dim": null, "timeout_s": 60.0, "max_retries": 3},
+    {"name": "openai-small-1024", "provider": "openai_compatible", "model": "text-embedding-3-small", "dim": 1024, "base_url": "https://...", "api_key_configured": true, ...}
+  ],
+  "rerankers": [
+    {"name": "selfhosted-bge", "provider": "cohere_compatible", "model": "text-reranker", "base_url": "https://...", "api_key_configured": true, "timeout_s": 30.0, "min_score": 0.0}
+  ],
+  "routes": [
+    {"match": {"glob": "*_openai"}, "embedding": "openai-small-1024", "embedding_fallbacks": [], "reranker": null, "rerank_enabled": false, "chunk_top_k": 30, "top_k": 8}
+  ],
+  "default_route": {"embedding": "gemini-3072", "embedding_fallbacks": [], "reranker": "selfhosted-bge", "rerank_enabled": false, ...}
+}
+```
+
+### POST /admin/probe-embedding?profile=&lt;name&gt;
+
+对单条 profile 做一次实际探活（**需鉴权**），返回 latency 与实测 dim：
+
+```bash
+curl -sS -X POST "${ENDPOINT}/admin/probe-embedding?profile=gemini-3072" \
+  -H "X-API-KEY: ${API_KEY}" | jq
+```
+
+成功响应：
+```json
+{"ok": true, "profile": "gemini-3072", "latency_ms": 717, "dim": 3072}
+```
+
+失败响应：
+```json
+{"ok": false, "profile": "openai-small-1024", "latency_ms": 4992, "error": "embedding upstream 503"}
+```
+
+用途：部署新 profile 后立即验证；排查为什么 ingest 失败；监控上游可用性。
+
+### per-request 选择 embedding profile
+
+所有 ingest / search / query 端点都接受可选字段 `embedding_model`：
+
+```bash
+# 强制指定 openai-small-1024（无视 container 名 → 路由表的默认匹配）
+curl -sS -X POST "${ENDPOINT}/embed" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project_openai","embedding_model":"openai-small-1024"}'
+```
+
+⚠ **dim 协议**：同一个 container 的 vec_index 维度在第一次写入时锁死。后续 override 必须指向**同 dim** 的 profile，否则 LanceDB schema mismatch 报错。最佳实践：为不同 dim 用不同 container 名（如 `myapp` 走 3072、`myapp_openai` 走 1024）。
+
+### per-request 控制 reranker（v0.8.0+）
+
+```bash
+# 临时开启 reranker（即使 route 默认 disabled）
+curl -sS -X POST "${ENDPOINT}/query" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project","query":"...","rerank":true}'
+
+# 临时换用 cohere（即使 route 配的是 selfhosted-bge）
+curl -sS -X POST "${ENDPOINT}/query" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project","query":"...","reranker_model":"cohere-v3","rerank":true}'
+```
+
+> ⚠ **字段名必须是 `rerank`，不是 `enable_rerank`**。Pydantic 严格模式会**静默丢弃**未知字段 — 错的字段名不会报错也不会生效，reranker 仍然不会被调用。
+
+> ⚠ **Reranker 仅作用于 `/query` 路径**。`/search` 是 LanceDB 直查（cosine + topk），不经过任何 rerank。如果客户端全用 `/search`，rerank 配置再完美也永远不会触发。
+>
+> 还有一个前提：reranker 只看 `/query` 返回的 chunk，而 `/query` 只看知识图谱里的内容（`/documents/text` / `/documents/upload` 入库的）。只用 `/ingest-memory/objects` / `/tm remember` 写入的 container 是 LanceDB-only，`/query` 返回 `(no answer generated)`，rerank 无内容可排。详见 [`best-practices.md` §1.2 双轨写入](best-practices.md)。
+
+### 何时用 multi-model 字段
+
+| 场景 | 推荐做法 |
+|------|------|
+| 日常调用 | **不传** embedding_model / rerank — 走 server 配置的 route 默认 |
+| A/B 测试两个 model | 客户端按 user_id hash 切，用 `embedding_model` 强制 |
+| 临时切到备 model 应急 | `embedding_model: "<backup-name>"` 配套新 container 名（避免维度冲突）|
+| 单次需要高质量重排 | `rerank: true` |
+| 单次跨语言查询用 Cohere | `reranker_model: "cohere-v3", rerank: true` |
+
+详细 server 配置见 server 仓 `docs/MULTI_MODEL_GUIDE.md`。
+
+---
 
 ## 读取配置的辅助方法
 

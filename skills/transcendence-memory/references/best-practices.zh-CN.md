@@ -75,14 +75,14 @@ curl -sS -X POST "${ENDPOINT}/documents/text" \
 很多项目默认 container 是 `my-project`、`home` 这种通用名,日积月累塞进数千条对话备份/笔记。**新写入的精炼经验会被淹没在噪声里**:
 
 - 实测:在 5000+ chunks 的 my-project 容器里写入 4 条 RN OTA 经验,用 "react native ota" 检索,top 5 全部是历史对话,新经验进不了 topk=10
-- 同样 4 条放进新建的 react-native-recipes 容器(只有 4 条),top 1 score=0.475 直接命中
+- 同样 4 条放进新建的 mobile-recipes 容器(只有 4 条),top 1 score=0.475 直接命中
 
 ### 2.2 推荐模式 — 按主题建专属容器
 
 为每个**可复用的、跨项目的知识主题**单独建容器,命名用 kebab-case 短名：
 
 ```
-react-native-recipes      # RN 实战经验
+mobile-recipes      # RN 实战经验
 ios-publishing-guides     # iOS 发版/审核
 flutter-recipes           # Flutter 经验
 auth-oidc-patterns        # 认证集成
@@ -96,7 +96,7 @@ strapi-cms-patterns       # Strapi CMS 设计
 
 ```bash
 # 单容器精确检索
-/tm search --match react-native-recipes "react native ota"
+/tm search --match mobile-recipes "react native ota"
 
 # 多容器模糊检索
 /tm search --match recipes "ota"   # 命中所有 *-recipes 容器
@@ -191,3 +191,66 @@ done
 | 入图谱后立即 query 返回"无信息" | 图谱构建是异步的 | 等 20–60 秒 → §3.2 |
 
 如本表条目重新出现,优先参考已更新的 api-reference.md / troubleshooting.md;若发现新的反模式,追加到本文档。
+
+---
+
+## 6. Embedding/Reranker 选型与 dim 决策树（v0.7.0+）
+
+### 6.1 何时新建 profile vs 何时复用 default
+
+| 情景 | 建议 |
+|------|------|
+| 单一团队/项目,所有 container 内容性质相近 | 用 default route 1 个 profile,不要过度拆 |
+| 不同 container 知识空间差异大(代码 vs 中文长文 vs 多语) | 按主题拆 profile,routes 用 glob 命中(如 `*_zh` / `*_code`) |
+| 上游 quota 经常爆/单点不可靠 | 加 fallback 链(`embedding_fallbacks: [...]`,必须同 dim) |
+| 要做 A/B 对比检索质量 | 双轨命名(`home` + `home_openai`),用 migrate 工具 clone 一份 |
+| 调用方完全无法控制 container 名 | per-request 带 `embedding_model` override |
+
+### 6.2 选 dim 的决策树
+
+```
+你写入的内容是?
+├─ 主要中英文混合长文 → 3072 维(gemini-embedding-001 或 text-embedding-3-large)
+│                       优点:语义保真度高,跨语言对齐好
+│                       代价:LanceDB 占用 ~3×,latency p50 高 ~30%
+├─ 短句/代码/标签结构化记忆 → 1024 维(text-embedding-3-small)
+│                       优点:latency 低,磁盘小
+│                       代价:对相似但措辞不同的语义召回略弱
+└─ 长尾多语种(日韩阿拉伯等) → 优先 multilingual-e5-large 或 jina-v3
+```
+
+### 6.3 维度锁死铁律
+
+**第一次写入一个 container,该 container 的 LanceDB vec 列就锁死该 dim 永久。**
+后续:
+- 同 dim profile 换模型 → 可以,但已有向量与新向量语义空间不同,搜索质量混乱
+- 不同 dim profile 切换 → **直接抛 lance error: query dim X != column dim Y**
+- 想换 dim → 必须用 **`scripts/migrate_embeddings.py`**(in-place 替换,旧表
+  自动备份为 `chunks_old_<ts>`)或**双轨命名**(新建 `<container>_openai` clone)
+
+### 6.4 双轨并运的命名约定
+
+成熟项目用「主轨 default 3072 + 镜像轨 `*_openai` 1024」双写模式:
+
+```bash
+# 写入(双轨同步)
+curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home","objects":[...],"auto_embed":true}'
+curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home_openai","objects":[...],"auto_embed":true}'
+
+# 检索(选模型)
+curl -sS -X POST "${ENDPOINT}/search" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home","query":"..."}'           # 3072 高保真
+curl -sS -X POST "${ENDPOINT}/search" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home_openai","query":"..."}'    # 1024 低延迟
+```
+
+### 6.5 Reranker 何时开
+
+- **默认关**:routes 的 `rerank.enabled: false`。Reranker 把 query 延迟翻倍(~+500ms)
+- **开启时机**:
+  - 文档密度高(`/query` RAG 召回 top_k > 10,需要精排)
+  - 跨语言检索(reranker 在语义对齐上比纯 vec 更准)
+  - 业务关键搜索(用户搜不到会卡壳)
+- **per-request 启用**:`/search` / `/query` 带 `"rerank": true`,无需改 routes

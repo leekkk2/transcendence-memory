@@ -151,6 +151,88 @@ curl -sS -X POST "${ENDPOINT}/embed" \
 - 任何 5xx → **不算通过**
 - 403 + Cloudflare 页面 → **WAF 拦截，非鉴权失败**
 
+## Multi-Embedding 运维操作（v0.7.0+ / v0.10.0+）
+
+### 切换 container 默认 embedding profile
+
+只改 server 端 `config/profiles.yaml` routes 段即可，**不需要重启容器**（cache key 含 route signature，profile 变化时下次请求自动刷新 LightRAG instance）：
+
+```yaml
+routes:
+  - match: {exact: home}                  # 新增 exact 规则
+    embedding: openai-small-1024
+  - match: {default: true}                # 兜底不变
+    embedding: gemini-3072
+```
+
+### container 内 in-place 换 dim（替换式 migration）
+
+使用 server 自带 `scripts/migrate_embeddings.py`（v0.10.0+）。dry-run 默认；显式 `--commit` 才写：
+
+```bash
+docker exec <container> python3 /app/scripts/migrate_embeddings.py \
+  --container default --from gemini-3072 --to openai-small-1024 --dry-run
+docker exec <container> python3 /app/scripts/migrate_embeddings.py \
+  --container default --from gemini-3072 --to openai-small-1024 --commit
+# 写 chunks_v2 → atomic rename → 旧表保留为 chunks_old_<ts>
+```
+
+回滚：把 `chunks.lance` 删，将 `chunks_old_<ts>.lance` rename 回 `chunks.lance`。
+
+### 双轨并运（新建镜像 container，源不动）
+
+clone 一个 container 到 sibling 命名（如 `home` → `home_openai`），源完全不动。`routes` 配上 glob（如 `*_openai → openai-small-1024`），dst 命名命中 glob 即自动路由。
+
+**何时用 clone vs in-place migrate**：
+- in-place migrate（上节，server 内置）：想换 profile 但保持 container 名不变；旧表自动备份；适合**单轨切换**
+- clone（本节）：源 container 完全不动，镜像出 sibling container；适合**双轨并运** / A/B 对比 / 实验性试 profile / 容器重命名
+
+使用 server v0.11.0+ 内置 `scripts/clone_container_reembed.py`（含 dry-run/commit + 自动 chown tm:tm + 顶级列三字段同步 + 9 个 regression tests）：
+
+```bash
+docker exec <container> python3 /app/scripts/clone_container_reembed.py \
+  --src home --dst home_openai --to-profile openai-small-1024 --dry-run
+docker exec <container> python3 /app/scripts/clone_container_reembed.py \
+  --src home --dst home_openai --to-profile openai-small-1024 --commit
+# 自动 chown 到 tm:tm (10001:10001)；--no-chown 跳过（宿主无权场景）
+```
+
+后续写入：双轨需调用方**写两遍**保持同步（或等 server 端 `mirror_containers` feature 自动镜像）。读取：按业务选 container 名，server 自动路由对应 profile。
+
+### 行级 embedding 归属查询（重要！避免误判位置）
+
+LanceDB chunks 表 v0.7.0+ 起为每行 schema 增加了 **3 个顶级列**记录嵌入归属：
+
+| 顶级列 | 含义 | 取法 |
+|---|---|---|
+| `embedding_model` | 实际调用的 model 名（如 `text-embedding-3-small`） | `row['embedding_model']` |
+| `embedding_dim` | 实际维度（如 `1024`） | `row['embedding_dim']` |
+| `embedding_profile` | profiles.yaml 里的 profile 名（如 `openai-small-1024`） | `row['embedding_profile']` |
+
+⚠ **常见误判位置**：这 3 个字段**不在** `row['metadata']` JSON 内（`metadata` 是业务侧 client ingest 时给的 dict），它们是**顶级 LanceDB 列**。审计 / 排查时直接读 `t.to_pandas()['embedding_model']` 不要 `json.loads(row['metadata'])['embedding_model']`（永远拿不到）。
+
+容器内查询示例：
+
+```python
+import lancedb
+db = lancedb.connect('/data/tasks/rag/containers/<X>/lancedb')
+t = db.open_table('chunks')
+df = t.to_pandas()
+print(df[['chunkId', 'embedding_model', 'embedding_dim', 'embedding_profile']].head())
+# 全表分桶
+print(df['embedding_model'].value_counts())
+```
+
+如果某行该列为空（v0.6.x 写入的旧行），按业务侧 server 端 profiles.yaml 的 default route 推断即可。
+
+### 监控 / 巡检
+
+```bash
+curl -sS -H "X-API-KEY: ${KEY}" "${ENDPOINT}/admin/profiles" | jq
+curl -sS -X POST -H "X-API-KEY: ${KEY}" "${ENDPOINT}/admin/probe-embedding?profile=<name>"
+curl -sS -H "X-API-KEY: ${KEY}" "${ENDPOINT}/admin/system-health"   # 含 profiles summary
+```
+
 ## Reminder
 
 Builtin memory 保持启用。本技能增强检索能力，不替换内置记忆。

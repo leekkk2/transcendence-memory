@@ -76,14 +76,14 @@ curl -sS -X POST "${ENDPOINT}/documents/text" \
 Most projects keep a generic default container (e.g. `my-project`, `home`) that accumulates thousands of conversation backups and notes. **A few high-quality memories written into such a container get drowned in the noise:**
 
 - Observed: a 5,000+ chunk `my-project` container; 4 freshly written React Native OTA memories; query `"react native ota"` returned conversation backups for the entire `topk=10` window — none of the new memories surfaced
-- Same 4 memories in a fresh `react-native-recipes` container (4 chunks total): top-1 score `0.475`, all four ranked in the top 4
+- Same 4 memories in a fresh `mobile-recipes` container (4 chunks total): top-1 score `0.475`, all four ranked in the top 4
 
 ### 2.2 Recommended — one dedicated container per reusable topic
 
 For each cross-project, long-lived knowledge area, create a kebab-case container:
 
 ```
-react-native-recipes      # RN field experience
+mobile-recipes      # RN field experience
 ios-publishing-guides     # iOS release / review
 flutter-recipes
 auth-oidc-patterns
@@ -97,7 +97,7 @@ Once content lives in a dedicated container, fetch it from any project with:
 
 ```bash
 # Single dedicated container
-/tm search --match react-native-recipes "react native ota"
+/tm search --match mobile-recipes "react native ota"
 
 # Fuzzy across all *-recipes containers
 /tm search --match recipes "ota"
@@ -192,3 +192,65 @@ A 200 response only means the document has been queued. **Wait at least 30 secon
 | Querying immediately after `/documents/text` returned "no information" | Knowledge graph build is asynchronous | Wait 20–60s → §3.2 |
 
 When any of these patterns reappear, refer first to the updated `api-reference.md` / `troubleshooting.md`. New anti-patterns should be appended here.
+
+---
+
+## 6. Embedding/Reranker selection & dim decision tree (v0.7.0+)
+
+### 6.1 Add a profile vs reuse default
+
+| Situation | Recommendation |
+|-----------|----------------|
+| Single team/project, similar content per container | Use 1 default profile, don't over-split |
+| Containers differ heavily (code vs CJK long-form vs multi-lang) | Split per topic, route via glob (`*_zh` / `*_code`) |
+| Upstream quota frequently exhausted / unreliable | Add fallback chain (`embedding_fallbacks: [...]`, **same dim required**) |
+| Want A/B comparison of retrieval quality | Dual-track naming (`home` + `home_openai`), use migrate tool to clone |
+| Caller can't control container name | per-request `embedding_model` override |
+
+### 6.2 Picking dim
+
+```
+What are you writing?
+├─ Mixed-language long-form text → 3072 dim (gemini-embedding-001 / text-embedding-3-large)
+│                                  Pros: high semantic fidelity, good cross-lingual alignment
+│                                  Cost: ~3× LanceDB storage, p50 latency +30%
+├─ Short snippets/code/tags → 1024 dim (text-embedding-3-small)
+│                            Pros: low latency, small storage
+│                            Cost: weaker recall for paraphrased semantics
+└─ Long-tail multi-lang (JP/KR/AR) → multilingual-e5-large or jina-v3
+```
+
+### 6.3 Dim lock-in rule (HARD)
+
+**The first write to a container locks its LanceDB vec column dim forever.** After:
+- Same-dim profile swap → possible, but old/new vectors live in different semantic spaces — search quality becomes muddled
+- Different-dim profile swap → **lance error: query dim X != column dim Y** immediately
+- To change dim → use `scripts/migrate_embeddings.py` (in-place, auto-backup
+  to `chunks_old_<ts>`) OR dual-track naming (new `<container>_openai` clone)
+
+### 6.4 Dual-track naming convention
+
+Mature projects run "main 3072 + mirror `*_openai` 1024" dual-write:
+
+```bash
+# Write (dual)
+curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home","objects":[...],"auto_embed":true}'
+curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home_openai","objects":[...],"auto_embed":true}'
+
+# Retrieve (pick model)
+curl -sS -X POST "${ENDPOINT}/search" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home","query":"..."}'           # 3072 high-fidelity
+curl -sS -X POST "${ENDPOINT}/search" -H "X-API-KEY: ${API_KEY}" \
+  -d '{"container":"home_openai","query":"..."}'    # 1024 low-latency
+```
+
+### 6.5 When to enable reranker
+
+- **Default off**: routes `rerank.enabled: false`. Reranker doubles query latency (~+500ms)
+- **Enable when**:
+  - High document density (`/query` RAG retrieves top_k > 10, needs refinement)
+  - Cross-lingual retrieval (rerankers beat pure vec on semantic alignment)
+  - Business-critical search (users get stuck if results are off)
+- **Per-request**: pass `"rerank": true` to `/search`/`/query`, no routes edit needed
