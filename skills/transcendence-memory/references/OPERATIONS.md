@@ -236,3 +236,59 @@ curl -sS -H "X-API-KEY: ${KEY}" "${ENDPOINT}/admin/system-health"   # 含 profil
 ## Reminder
 
 Builtin memory 保持启用。本技能增强检索能力，不替换内置记忆。
+
+## Automatic Memory (lifecycle hooks)
+
+Four hooks deliver fully automatic memory across sessions. Writing requires `~/.transcendence-memory/auto-memory.enabled`; reading/injection only needs `config.toml` (read-write separation).
+
+### Hooks
+
+| Hook | Event | Needs auto-memory | What it does |
+|---|---|---|---|
+| `session-start` | SessionStart | No | Health check + recall relevant memories from prior sessions into context |
+| `prompt-inject` | UserPromptSubmit | Long prompts: yes | Trigger on recall keywords or long prompts; inject memories before agent responds |
+| `post-commit-memory` | PostToolUse (Bash) | Yes | After git commit/merge/rebase, store a commit summary memory |
+| `session-stop` | Stop | Yes | Extract last 3 assistant messages from transcript; store as session-summary (5-min throttle) |
+
+All four installed automatically via `/plugin install transcendence-memory`.
+
+### Enable / disable / status
+
+```text
+/tm auto on       # PostToolUse + Stop write-hooks
+/tm auto off      # disable write-hooks (recall still works)
+/tm auto status   # current state + endpoint + container
+```
+
+SessionStart + UserPromptSubmit (keyword-mode) recall works independently of auto-memory — they only need `config.toml`.
+
+### What gets stored
+
+**Auto-commit memory** (PostToolUse, tag `auto-commit`):
+```
+[commit abc1234] fix: resolve port conflict | files: M docker-compose.yml, M .env.example
+```
+
+**Session summary memory** (Stop, tags `auto-session` + `summary`):
+```
+[session-summary] project:my-project | 2026-04-30T12:00:00Z | <last 3 assistant messages>
+```
+
+Filter with `/tm search auto-commit` or `/tm search session-summary`.
+
+## Platform Support
+
+Hooks ship pre-built configs for multiple AI coding CLIs.
+
+| Platform | Config / detection |
+|---|---|
+| Claude Code (primary) | `hooks/hooks.json` + `CLAUDE_PLUGIN_ROOT` env, auto-registered by `/plugin install` |
+| Cursor | `hooks/hooks-cursor.json` (camelCase events) + `CURSOR_PLUGIN_ROOT` env |
+| Gemini CLI | `AfterTool` + `matcher` field detection |
+| Windsurf | `post-tool-use` + `arguments` field detection |
+| Vibe CLI | `post-tool-call` + `input` field detection |
+| Cline / Roo Code | `tool_name` / `tool` + JSON stdin/stdout heuristic |
+| Copilot CLI | Claude Code compatible (`COPILOT_CLI` env) |
+| Augment Code | Falls back to Claude Code format |
+
+Platforms without native hooks: add transcendence-memory instructions to the rules file (`.cursorrules`, `AGENTS.md`, `.clinerules/`).
