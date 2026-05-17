@@ -534,7 +534,7 @@ curl -sS -X POST "${ENDPOINT}/query" \
 
 > ⚠ **Reranker 仅作用于 `/query` 路径**。`/search` 是 LanceDB 直查（cosine + topk），不经过任何 rerank。如果客户端全用 `/search`，rerank 配置再完美也永远不会触发。
 >
-> 还有一个前提：reranker 只看 `/query` 返回的 chunk，而 `/query` 只看知识图谱里的内容（`/documents/text` / `/documents/upload` 入库的）。只用 `/ingest-memory/objects` / `/tm remember` 写入的 container 是 LanceDB-only，`/query` 返回 `(no answer generated)`，rerank 无内容可排。详见 [`best-practices.md` §1.2 双轨写入](best-practices.md)。
+> 数据可来自任一路径：`/query` 在 LightRAG hybrid 模式下，对**LanceDB-only container**（仅 `/ingest-memory/objects` / `/tm remember` 写入）会自动 fallback 用向量检索，reranker 仍正常作用于这些 chunk。要获得更好的 answer 质量（实体抽取 + 关系图），可额外通过 `/documents/text` / `/documents/upload` 入知识图谱。详见 [`best-practices.md`](best-practices.md)。
 
 ### 何时用 multi-model 字段
 
