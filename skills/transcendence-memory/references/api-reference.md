@@ -66,7 +66,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | `pattern_mode` | string | 否 | `substring`（默认）/ `prefix` / `glob` |
 | `timeout_s` | int | 否 | subprocess 整体超时秒数（默认 600） |
 | `union` | bool | 否 | **v0.11.0+**：单 container 入参时是否自动追加 sibling `_openai` 镜像。`null`（默认）= 走 `profiles.yaml` 的 `union_search_default`；`true/false` 显式覆盖。`containers` / `container_pattern` 模式下被忽略 |
-| `per_container_timeout_s` | float | 否 | **v0.11.0+**：单容器子查询超时（0.5–30s，默认 3.0）。仅多容器场景启用；超时容器在 `per_container_status` 标记 `timeout`，不影响其余 |
+| `per_container_timeout_s` | float | 否 | **v0.11.0+**：单容器子查询超时（0.5–30s，**默认 12.0**，v0.11.1+；v0.11.0 默认 3.0 但 subprocess cold-start 实测不够稳）。仅多容器场景启用；超时容器在 `per_container_status` 标记 `timeout`，不影响其余 |
 
 跨容器示例：
 
