@@ -140,6 +140,31 @@ curl -sS -X POST "${ENDPOINT}/search" \
 
 > 跨容器响应里每条 hit 会带 `container` 字段，并附 `containers` / `per_container_status` 用于诊断。`topk` 是合并后的全局上限，不是每容器独立。
 
+#### v0.11.0+：默认 union 双轨召回
+
+如果 server 端 `profiles.yaml` 设了 `union_search_default: true`，单 container 查询会**自动同时查 sibling `_openai` 镜像**（gemini-3072 + openai-1024 双轨召回），结果按 `(taskId, chunkId)` 去重后合并。响应里多了两个字段：
+
+- `union_applied: true` — 自动 union 触发
+- `degraded: true` — 至少一个目标容器超时 / 失败（默认 per-container 3s timeout）
+- `per_container_status: {<X>: 'ok', <X>_openai: 'ok' | 'timeout' | 'not_initialized'}`
+
+强制单容器查询（即使 server 启用了默认 union）：
+```bash
+curl -sS -X POST "${ENDPOINT}/search" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "{\"container\":\"${CONTAINER}\",\"query\":\"${QUERY}\",\"topk\":5,\"union\":false}"
+```
+
+强制 union（即使 server 默认关闭，且 sibling `_openai` 必须已存在）：
+```bash
+curl -sS -X POST "${ENDPOINT}/search" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d "{\"container\":\"${CONTAINER}\",\"query\":\"${QUERY}\",\"topk\":5,\"union\":true}"
+```
+
+> 自定义 per-container timeout（默认 3.0s，范围 0.5–30）：加 `\"per_container_timeout_s\":5.0`。
+> 显式 `containers` / `container_pattern` 参数会跳过自动 union（用户已掌控全部目标）。
+
 #### Response schema (实测速查)
 
 `/search` 顶层返回的命中数组字段名是 **`results`**（不是 `hits`），每条命中的字段如下：

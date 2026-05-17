@@ -105,7 +105,25 @@ strapi-cms-patterns       # Strapi CMS 设计
 /tm search --all "react-native-ota-hot-update"
 ```
 
-### 2.4 何时迁移
+### 2.4 双轨 embedding 与默认 union 召回（v0.11.0+）
+
+如果 server 同时跑**双轨 embedding**（如 gemini-3072 主轨 + `<container>_openai` 镜像走 text-embedding-3-small / 1024 dim），在 `profiles.yaml` 顶层设 `union_search_default: true`，普通 `/tm search my-container ...` 会**自动同时查两轨**，结果按 `(taskId, chunkId)` 去重合并，免费拿到跨轨召回。
+
+```yaml
+# config/profiles.yaml
+union_search_default: true
+```
+
+触发时响应里 `union_applied: true`，`per_container_status` 同时列两个容器。若一轨超时（默认 3s），另一轨仍返回，整体 `degraded: true` — 不会因为一个慢镜像让整个查询失败。
+
+按需关闭某次查询（如 eval 想拿单轨 baseline）：
+
+```bash
+/tm search "react native ota" --container my-container  # 走配置的默认行为
+curl ... -d '{"container":"my-container","query":"X","union":false}'  # 强制单轨
+```
+
+### 2.5 何时迁移
 
 如果发现某个主题在默认容器里被淹没,做一次性迁移:
 
