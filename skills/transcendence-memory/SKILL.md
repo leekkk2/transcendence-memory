@@ -150,7 +150,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
   "results": [
     {
       "score": 0.56,
-      "container": "team",
+      "container": "my-container",
       "taskId": "<source-task>",
       "chunkId": "<taskId>#client-ingest#<idx>",
       "docType": "client_ingest",
