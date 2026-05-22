@@ -316,6 +316,27 @@ curl -sS -i -X POST "${ENDPOINT}/documents/upload" \
 - multipart/form-data 格式错误
 - VLM 未配置（server 端问题）→ 联系管理员
 
+### `/documents/text` / `/documents/upload` 返回 524 / 超时
+
+**现象**：调用 `/documents/text` 卡很久后返回 HTTP 524（Cloudflare 网关超时）或连接超时。
+
+**根因**：server 为 **< v0.15.0 旧 build**。这些版本**同步建图**——实体抽取 + 关系推断 + LLM 索引在 HTTP 请求内完成，大文档耗时超过 Cloudflare 的网关上限即 524。
+
+**v0.15.0+ 行为**：`/documents/text` 与 `/documents/upload` 改为**纯异步**——入队即返回 job 标识（整数 `pid`），知识图谱由后台 worker 构建，请求**不会**再 524。
+
+**处理**：
+
+```bash
+# 1) 524 后数据可能已入队 —— 查队列里是否有对应 job 在跑
+curl -sS "${ENDPOINT}/jobs?status=running" -H "X-API-KEY: ${API_KEY}"
+# skill 侧等价命令：
+/tm jobs
+```
+
+- 若队列里有对应 container 的 running job → 数据已入队，等后台建完即可，无需重试。
+- 根治：升级 server 到 v0.15.0+。
+- 旧版临时缓解：把大文档拆成多个小段分批 `/documents/text`，单段控制在数 KB 内。
+
 ### query 返回空答案
 
 ```bash
@@ -327,7 +348,7 @@ curl -sS -X POST "${ENDPOINT}/query" \
 
 可能原因：
 - **最常见误用** — 只通过 `/ingest-memory/objects`（轻量路径）写入数据。该端点仅服务 `/search`,**不会自动进 RAG-Anything 知识图谱**。`/query` 必须通过 `/documents/text` 或 `/documents/upload` 显式入图。详见 `references/best-practices.md` 双路径决策树
-- 入库后处理尚未完成 — `/documents/text` 通常需要 **20–60 秒**完成实体抽取与图谱索引,刚 ingest 完立即 query 必然返回"无信息"。等 30 秒重试,或对大文档轮询 `/jobs/{pid}`
+- 后台建图尚未完成 — `/documents/text` / `/documents/upload` 入队即返回,知识图谱由后台 worker 异步构建（数十秒至数分钟）,建完前 `/query` 召回不到属正常。无需等待轮询,后续会话自动可召回;用 `/tm jobs` 查 job 进度,失败由 SessionStart 静默提示
 - 查询与入库内容语义不相关 → 尝试更具体的关键词（实体名 / 库名 / 文件名）。本次实战观察到过宽泛的问题（如"推荐什么方案?"）召回率明显低于具体问题（如"OTA 安装步骤"）
 - LLM 未配置（server 端问题）→ 联系管理员
 
@@ -342,7 +363,7 @@ DOC_TEXT=$(python3 -c "import json; print(json.dumps(open('/path/to/doc.md').rea
 curl -sS -X POST "${ENDPOINT}/documents/text" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
   -d "{\"container\":\"${CONTAINER}\",\"text\":${DOC_TEXT},\"description\":\"概要\"}"
-# 然后等 30 秒再 query
+# 入队即返回 job 标识；后台异步建图，建完后 /query 自动可召回，无需等待。
 ```
 
 详见 `references/best-practices.md` 的"跨路径双写"。

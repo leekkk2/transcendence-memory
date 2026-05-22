@@ -1,7 +1,7 @@
 {
   "name": "transcendence-memory",
   "description": "Long-term memory for AI coding agents. Self-hosted, multi-modal, works across sessions. Connect to your own memory backend for semantic search, persistent recall, and knowledge graph queries.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "author": {
     "name": "leekkk2"
   },
