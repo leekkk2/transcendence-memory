@@ -61,7 +61,8 @@ DOC_TEXT=$(python3 -c "import json; print(json.dumps(open('/path/to/recipe.md').
 curl -sS -X POST "${ENDPOINT}/documents/text" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
   -d "{\"container\":\"${CONTAINER}\",\"text\":${DOC_TEXT},\"description\":\"...\"}"
-# 等 30 秒图谱构建完成
+# /documents/text 入队即返回 job 标识（pid/job_id），知识图谱后台异步构建，不阻塞。
+# 内容稍后才可被 /query 召回属正常；用 /tm jobs 查进度，失败由 SessionStart 静默提示。
 ```
 
 > **常见误判**：只走路径 1 时 `/search` 立刻能召回,以为"完成了",几小时后用 `/query` 却得到"提供的知识库中没有相关信息"。这不是 bug,是路径隔离导致的。
@@ -142,9 +143,9 @@ curl ... -d '{"container":"my-container","query":"X","union":false}'  # 强制�
 | `/embed` 同步, < 100 chunks | 小 | 5–30 秒 |
 | `/embed` 同步, 100–1000 chunks | 中 | 30–120 秒 |
 | `/embed` 同步, 1000+ chunks | 大 | **避免同步,改 background:true** |
-| `/documents/text` HTTP 200 返回 | 任意 | < 1s（仅"已接收"） |
-| `/documents/text` 图谱可被 `/query` 召回 | 短文档 | 20–40 秒 |
-| `/documents/text` 图谱可被 `/query` 召回 | 长文档（10KB+） | 1–3 分钟 |
+| `/documents/text` 入队返回 job 标识 | 任意 | < 1s（仅"已入队"） |
+| `/documents/text` 图谱可被 `/query` 召回 | 短文档 | 数十秒 |
+| `/documents/text` 图谱可被 `/query` 召回 | 长文档（10KB+） | 数分钟 |
 
 ### 3.1 别同步 embed 大容器
 
@@ -162,9 +163,9 @@ until ! curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}" \
 done
 ```
 
-### 3.2 别立即 query
+### 3.2 `/documents/text` 是异步的 —— 别阻塞等建图
 
-`/documents/text` 返回 200 不代表可以 query,这只是"已接收"。**先等 30 秒**,大文档则更久。如果脚本里要等待,加 sleep 或 monitor 探测。
+server v0.15.0+ 入队即返回 job 标识（`pid`）,知识图谱由后台 worker 构建。内容**不即时可查**——这是设计如此,不是 bug。**不要轮询、不要 sleep 等待**,让它后台建完即可,后续会话自动可召回。用 `/tm jobs` 查进度,失败由 SessionStart 静默提示。（旧版 `< v0.15.0` server 同步建图,可能超时——见 `troubleshooting.md`。）
 
 ---
 

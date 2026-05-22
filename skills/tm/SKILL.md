@@ -33,6 +33,7 @@ That file documents the complete command set:
 | `upload <file>` | Add document to knowledge graph |
 | `containers [pattern]` | List containers |
 | `batch <file.jsonl>` | Bulk ingest |
+| `jobs` | List background knowledge-graph build jobs |
 | `auto on` / `auto off` / `auto status` | Toggle automatic memory hooks |
 | `upgrade` | Pull latest skill scripts |
 

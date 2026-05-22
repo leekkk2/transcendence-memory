@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Long-term memory for AI coding agents. Self-hosted, multi-modal, works across sessions. Connect to your own memory backend for semantic search, persistent recall, and session summaries.",
-    "version": "0.3.1"
+    "version": "0.4.0"
   },
   "plugins": [
     {
@@ -13,7 +13,14 @@
       "source": "./",
       "description": "Self-hosted long-term memory with semantic search, automatic git commit memory, session summaries, and context injection via lifecycle hooks.",
       "category": "productivity",
-      "tags": ["memory", "rag", "retrieval", "self-hosted", "embedding", "transcendence"]
+      "tags": [
+        "memory",
+        "rag",
+        "retrieval",
+        "self-hosted",
+        "embedding",
+        "transcendence"
+      ]
     }
   ]
 }

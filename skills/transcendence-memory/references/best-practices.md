@@ -62,7 +62,10 @@ DOC_TEXT=$(python3 -c "import json; print(json.dumps(open('/path/to/recipe.md').
 curl -sS -X POST "${ENDPOINT}/documents/text" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
   -d "{\"container\":\"${CONTAINER}\",\"text\":${DOC_TEXT},\"description\":\"...\"}"
-# Wait ~30 seconds for the knowledge graph to finish building.
+# /documents/text enqueues and returns a job id (pid/job_id) immediately; the
+# knowledge graph is built asynchronously in the background — do not block on
+# it. The content simply becomes queryable a bit later. Use `/tm jobs` to check
+# progress; a failed build is surfaced silently by the SessionStart hook.
 ```
 
 > **Common false-positive** — going through Path 1 only makes `/search` succeed immediately, so it feels "done". Hours later `/query` returns "no relevant information in the knowledge base". This is not a bug; it is the intended path isolation.
@@ -171,9 +174,15 @@ until ! curl -sS "${ENDPOINT}/jobs/${PID}" -H "X-API-KEY: ${API_KEY}" \
 done
 ```
 
-### 3.2 Do not query immediately after `/documents/text`
+### 3.2 `/documents/text` is async — do not block on the build
 
-A 200 response only means the document has been queued. **Wait at least 30 seconds** before the first `/query`; long documents need longer. Inside scripts, use a sleep or a monitor loop.
+Server v0.15.0+ enqueues the build and returns a job id (`pid`) immediately; the
+knowledge graph is built by a background worker. The content is **not instantly
+queryable** — that is expected, not a bug. **Do not poll or sleep-wait**; just
+let the build finish and the content becomes recallable in a later session.
+Check progress with `/tm jobs`; a failed build is surfaced silently by the
+SessionStart hook. (Old `< v0.15.0` servers build synchronously and may time
+out — see `troubleshooting.md`.)
 
 ---
 

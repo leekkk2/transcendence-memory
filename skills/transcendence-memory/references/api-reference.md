@@ -262,12 +262,20 @@ curl -sS -X POST "${ENDPOINT}/documents/text" \
 | `text` | string | 是 | 要入库的文本内容 |
 | `description` | string | 否 | 文档描述 |
 
-响应示例：
+响应示例（server v0.15.0+，异步入队）：
 ```json
-{"status": "ok", "container": "home", "answer": "Text ingested into container home knowledge graph.", "mode": "insert"}
+{"status": "enqueued", "container": "home", "pid": 12345, "job_id": 12345}
 ```
 
-> **重要异步行为**：HTTP 200 仅代表"已接收",真正的知识图谱构建（实体抽取 + 关系推断 + LLM 索引）在后台执行,通常需要 **20–60 秒**才能被 `/query` 召回。短文档（< 5KB）多数 30 秒内可用,长文档可能需要数分钟。如刚 ingest 后 `/query` 返回"无信息",**先等再重试**,不要怀疑数据未写入。
+| 响应字段 | 类型 | 说明 |
+|------|------|------|
+| `status` | string | `enqueued`（已入队）；旧版 server 同步建图时为 `ok` |
+| `pid` | int | 后台建图任务 job_id（客户端优先读此字段） |
+| `job_id` | int | 同 `pid` 的别名（部分版本同时返回；客户端两者都接受） |
+
+> **异步入队（server v0.15.0+）**：本端点把建图任务**入队后立即返回**,响应体携带 job 标识（整数 `pid`,部分版本同时给 `job_id`）。知识图谱（实体抽取 + 关系推断 + LLM 索引）由后台单 worker 异步构建,耗时**数十秒至数分钟**。`/query` 在建图完成前召回不到属正常——这是设计如此。用 `GET /jobs/{pid}` 查询进度,skill 侧用 `/tm jobs`。
+>
+> **旧版 server（< v0.15.0）**：同步建图,响应为 `{"status": "ok", ...}` 无 job 标识,且大文档可能因建图耗时触发 504 / 524 超时。skill 客户端对两种响应都兼容（无 job 标识 → 视为已完成,不记账本）。
 >
 > **与 `/ingest-memory/objects` 的区别**：本端点写入 RAG-Anything 知识图谱,服务于 `/query`;`/ingest-memory/objects` 写入 LanceDB 向量索引,服务于 `/search`。**两条路径互不相通**——同一份内容如果想被两个端点都召回,需要分别入库。详见 `references/best-practices.md`。
 
@@ -287,12 +295,14 @@ curl -sS -X POST "${ENDPOINT}/documents/upload" \
 | `file` | file | 是 | 上传的文件（multipart/form-data） |
 | `container` | string | 是 | 目标容器 |
 
-响应示例：
+响应示例（server v0.15.0+，异步入队）：
 ```json
-{"status": "accepted", "container": "home", "filename": "document.pdf", "pid": 12345}
+{"status": "enqueued", "container": "home", "filename": "document.pdf", "pid": 12345, "job_id": 12345}
 ```
 
-> 大文件上传可能异步处理，通过返回的 `pid` 查询进度。
+> **异步入队（server v0.15.0+）**：与 `/documents/text` 一致——入队即返回 job 标识（`pid`，部分版本同时给 `job_id`），文件解析 + 知识图谱构建由后台 worker 异步完成。用 `GET /jobs/{pid}` 或 `/tm jobs` 查进度。旧版 server 可能返回 `{"status": "accepted", ...}` 无 job 标识，客户端兼容。
+>
+> **`POST /documents/file`** 是 `POST /documents/upload` 的 alias，参数与行为完全一致。
 
 ### POST /query
 
@@ -388,7 +398,7 @@ curl -sS "${ENDPOINT}/export-connection-token?container=${CONTAINER}" \
 
 ### GET /jobs/{job_id}
 
-查询单个队列任务的状态。`job_id` 是 `/embed`、`/ingest-memory`、`/ingest-structured` 入队时返回的 `pid` 字段（v0.5.10+ 起 pid 字段承载 job_id 而非 OS PID）。
+查询单个队列任务的状态。`job_id` 是 `/embed`、`/ingest-memory`、`/ingest-structured`、`/documents/text`、`/documents/upload` 入队时返回的 `pid` 字段（v0.5.10+ 起 pid 字段承载 job_id 而非 OS PID）。
 
 ```bash
 curl -sS "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
