@@ -37,7 +37,7 @@ echo "$health" | grep -q '"status"' && server_ok=true
 if $server_ok; then
     base_context="[transcendence-memory] Connected to ${TM_ENDPOINT} (container: ${TM_CONTAINER}). Server is healthy.
 
-Available commands: /tm search, /tm remember, /tm query, /tm upload, /tm status, /tm embed, /tm containers, /tm batch"
+Available commands: /tm search, /tm remember, /tm query, /tm upload, /tm status, /tm embed, /tm containers, /tm batch, /tm jobs"
 else
     base_context="[transcendence-memory] Connected to ${TM_ENDPOINT} (container: ${TM_CONTAINER}), but server health check failed (${health}).
 
@@ -59,6 +59,15 @@ fi
 if ! $server_ok; then
     emit_context "SessionStart" "$base_context"
     exit 0
+fi
+
+# --- 静默回收后台建图 job（异步 ingestion 账本 sweep）---
+# 成功默默移出账本；唯有失败才输出一行提示。server 不可达 / 账本不存在 / 脚本缺失
+# 全部静默跳过，绝不让会话启动报错或变慢。
+job_warnings=""
+LEDGER_SCRIPT="${SCRIPT_DIR}/../skills/transcendence-memory/scripts/job-ledger.py"
+if [ -f "$LEDGER_SCRIPT" ]; then
+    job_warnings=$(python3 "$LEDGER_SCRIPT" sweep 2>/dev/null || echo "")
 fi
 
 # 根据 source 字段选择查询策略
@@ -105,6 +114,14 @@ if [ -n "$memory_block" ]; then
 ${memory_block}"
 else
     final_context="$base_context"
+fi
+
+# 后台建图 job 失败提示：异步 ingestion 唯一会主动告知用户的情况
+if [ -n "$job_warnings" ]; then
+    final_context="${final_context}
+
+[transcendence-memory] 后台记忆建图 job 检测到失败，请将以下每一行原文转达给用户：
+${job_warnings}"
 fi
 
 emit_context "SessionStart" "$final_context"

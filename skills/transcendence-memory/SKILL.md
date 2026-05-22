@@ -58,6 +58,7 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `upload <file>` | Upload a file into the knowledge graph | `/tm upload ./design.pdf` |
 | `containers [pattern]` | List containers, optionally filtered by a fuzzy pattern | `/tm containers my-project` |
 | `batch <file.jsonl>` | Bulk import memories | `/tm batch memories.jsonl` |
+| `jobs` | List background knowledge-graph build jobs (pending / failed / done) | `/tm jobs` |
 | `auto on` | Enable automatic memory on git commits | `/tm auto on` |
 | `auto off` | Disable automatic memory | `/tm auto off` |
 | `auto status` | Show auto-memory configuration | `/tm auto status` |
@@ -248,16 +249,19 @@ curl -sS -X POST "${ENDPOINT}/query" \
 
 > **Prerequisite**: `/query` only sees content ingested through `/documents/text` or `/documents/upload`. If you only used `/ingest-memory/objects` / `/tm remember`, the answer will be empty. To make memory objects queryable, also dual-write through `/documents/text`. See `references/best-practices.md` §1.2.
 >
-> **Latency**: After `/documents/text` returns 200, the knowledge graph still needs **20–60 seconds** to build (entity extraction + relation inference + LLM indexing). Querying immediately after ingestion will return "no information" — wait 30s and retry.
+> **Async ingestion (server v0.15.0+)**: `/documents/text` and `/documents/upload` **enqueue and return a job id immediately** (an integer `pid`, sometimes also `job_id`); the knowledge graph is built by a background worker over tens of seconds to a few minutes. Memory is therefore **not instantly queryable** — this is by design: memory "consolidates" in the background and becomes recallable in a later session. **Do not poll or wait.** If a build fails, the SessionStart hook surfaces it silently on the next session. Run `/tm jobs` any time to inspect progress.
 
 ### Command: `upload`
 
-Upload a file into the knowledge graph:
+Upload a file into the knowledge graph. **Asynchronous** (server v0.15.0+): enqueues the build, returns a job id at once. Record one ledger entry and **return immediately — no polling, no waiting.**
 ```bash
-curl -sS -X POST "${ENDPOINT}/documents/upload" \
-  -H "X-API-KEY: ${API_KEY}" \
-  -F "file=@$1" \
-  -F "container=${CONTAINER}"
+RESP=$(curl -sS -X POST "${ENDPOINT}/documents/upload" \
+  -H "X-API-KEY: ${API_KEY}" -H "User-Agent: transcendence-memory-skill/0.4" \
+  -F "file=@$1" -F "container=${CONTAINER}")
+echo "$RESP"
+# Record the job id (skipped automatically if an old sync server returns no id):
+echo "$RESP" | python3 "<skill-path>/scripts/job-ledger.py" add \
+  --endpoint "${ENDPOINT}" --container "${CONTAINER}" --kind upload --source "/tm upload"
 ```
 
 ### Command: `batch`
@@ -283,6 +287,16 @@ Supported options:
 The script uses WAF-compatible request headers, auto-splits batches on HTTP 413, and logs failed objects for retry.
 
 > **写自定义客户端时一定要带 User-Agent**：Cloudflare 部署的 endpoint 会把 Python urllib / Go net/http / Node fetch 的默认 UA 直接 1010 拦截（与 payload 大小无关）。任何绕过 `batch-ingest.py` 直接 `urllib.request` / `requests` / `fetch` 的脚本，都需要显式 `User-Agent: transcendence-memory-batch/0.2`（或任意非默认值）。详见 `references/troubleshooting.md` → "403 Forbidden（Cloudflare / WAF 拦截）"。
+
+### Command: `jobs`
+
+List background knowledge-graph build jobs from the local ledger. `/documents/text` / `/documents/upload` are async (server v0.15.0+); this reads `~/.transcendence-memory/pending-jobs.jsonl` and re-checks `/jobs/{id}` per entry.
+
+```bash
+python3 "<skill-path>/scripts/job-ledger.py" list
+```
+
+Shows in-progress / failed (with reason — retryable) / recently-done. You rarely need this: successes are silent, failures are surfaced by the SessionStart hook.
 
 ## Quick Reference (for configured users)
 
@@ -323,14 +337,19 @@ curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}/memories/mem-001" \
 ### Multimodal RAG (RAG-Anything pipeline)
 
 ```bash
-# Ingest raw text into the knowledge graph
+# Ingest raw text into the knowledge graph. Async (server v0.15.0+): enqueues
+# and returns a job id at once — do not poll or wait. Record it afterwards with
+# `python3 <skill-path>/scripts/job-ledger.py add` (see the `jobs` command).
 curl -sS -X POST "${ENDPOINT}/documents/text" \
   -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -H "User-Agent: transcendence-memory-skill/0.4" \
   -d '{"container":"${CONTAINER}","text":"long text to ingest...","description":"optional description"}'
 
-# Upload a file (PDF, image, or Markdown)
+# Upload a file (PDF, image, or Markdown) — async, same job-id semantics as
+# /documents/text. See the `upload` command above for the ledger-recording form.
 curl -sS -X POST "${ENDPOINT}/documents/upload" \
   -H "X-API-KEY: ${API_KEY}" \
+  -H "User-Agent: transcendence-memory-skill/0.4" \
   -F "file=@/path/to/document.pdf" \
   -F "container=${CONTAINER}"
 
@@ -459,17 +478,14 @@ fi
 
 ## Files in This Skill
 
+> `references/*.md` are listed in the **Reference Documents** table above. The
+> non-reference files in this skill:
+
 | File | Purpose | When to load |
 |------|------|---------|
-| `references/setup.md` | First-time setup guide | First use only |
-| `references/api-reference.md` | Complete API reference | When API details are needed |
-| `references/ARCHITECTURE.md` | Architecture and data flow | When understanding the system |
-| `references/OPERATIONS.md` | Operational verification and acceptance | During deployment verification |
-| `references/troubleshooting.md` | Troubleshooting guide | When something goes wrong |
-| `references/best-practices.md` | Dual-path model, dedicated containers, async timing, real-world lessons | Before designing memory layout for a new project, or when `/query` returns empty despite successful ingestion |
-| `references/best-practices.zh-CN.md` | Chinese translation of `best-practices.md` | Same as above, when Chinese is preferred |
 | `references/templates/config.toml.template` | Config file template | During first-time setup |
 | `scripts/batch-ingest.py` | Bulk ingest script | For large memory imports |
+| `scripts/job-ledger.py` | Async job ledger: `add` / `sweep` / `list` for background KG build jobs | Used by `/tm jobs`, `/tm upload`, and the SessionStart hook |
 | `hooks/common.sh` | Shared bash library for all hooks (config loading, API calls, JSON escaping) | Auto-loaded by hooks |
 | `hooks/session-start` | SessionStart hook: health check + memory recall injection | Auto-registered |
 | `hooks/prompt-inject` | UserPromptSubmit hook: recall-keyword / long-prompt triggered memory injection | Auto-registered |
