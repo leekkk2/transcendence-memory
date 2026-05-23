@@ -39,6 +39,22 @@ After `/reload-plugins`, the four lifecycle hooks (SessionStart / UserPromptSubm
 - **Progressive loading**: read `references/setup.md` during first-time setup, then this file is enough for day-to-day use
 - **Two paths, no auto-bridge**: `/ingest-memory/objects` writes to LanceDB (served by `/search`); `/documents/text` and `/documents/upload` write to the RAG-Anything knowledge graph (served by `/query`). Data ingested through one path is **not** auto-promoted to the other. When you need both `/search` snippets and `/query` synthesis, you must dual-write. See `references/best-practices.md`.
 
+## AI Behavior — async ingestion silent-mode (v0.4.1+, STRICT)
+
+Any call that returns an integer `pid` / `job_id` from a server v0.15.0+ KG-write endpoint (`/tm upload`, raw `POST /documents/text`, `POST /documents/upload`) is **fire-and-forget**. HTTP already returned — the task is handed off. The AI **MUST**:
+
+1. **Never poll `/jobs/{id}` to wait for completion.** No `until` loops, no sleep-loops, no blocking waits.
+2. **Pipe the server response to the ledger and end the turn**:
+   ```bash
+   echo '<server-response-json>' | python3 <skill-path>/scripts/job-ledger.py add
+   ```
+3. **Stay silent on success.** The SessionStart hook sweeps the ledger next session; **only failures surface** one warning line to the user. When the user mentions this skill (or memory / RAG / KG) again mid-session, silently run `python3 <skill-path>/scripts/job-ledger.py sweep` — **never report success**, only surface failures.
+4. User-initiated inspection: `/tm jobs`.
+
+❌ Don't tell the user "ingestion succeeded, doc is queryable now" right after enqueue — only enqueued; KG isn't built yet. ❌ Don't treat empty `/query` immediately after enqueue as failure — expected; the doc becomes recallable in a later session.
+
+> Fire-and-forget by design. If everything is fine, the user never hears about it.
+
 ## Built-in Commands
 
 These commands can be invoked through `/transcendence-memory <command>` or the short form `/tm <command>`:
@@ -247,13 +263,11 @@ curl -sS -X POST "${ENDPOINT}/query" \
   -d "{\"query\":\"$ARGUMENTS\",\"container\":\"${CONTAINER}\",\"mode\":\"hybrid\",\"top_k\":60}"
 ```
 
-> **Prerequisite**: `/query` only sees content ingested through `/documents/text` or `/documents/upload`. If you only used `/ingest-memory/objects` / `/tm remember`, the answer will be empty. To make memory objects queryable, also dual-write through `/documents/text`. See `references/best-practices.md` §1.2.
->
-> **Async ingestion (server v0.15.0+)**: `/documents/text` and `/documents/upload` **enqueue and return a job id immediately** (an integer `pid`, sometimes also `job_id`); the knowledge graph is built by a background worker over tens of seconds to a few minutes. Memory is therefore **not instantly queryable** — this is by design: memory "consolidates" in the background and becomes recallable in a later session. **Do not poll or wait.** If a build fails, the SessionStart hook surfaces it silently on the next session. Run `/tm jobs` any time to inspect progress.
+> **Prerequisite**: `/query` only sees content ingested through `/documents/text` or `/documents/upload` (LanceDB-only memories via `/tm remember` won't synthesize). Dual-write: see `references/best-practices.md` §1.2. **Async semantics**: see [`## AI Behavior`](#ai-behavior--async-ingestion-silent-mode-v041-strict) above — do not poll.
 
 ### Command: `upload`
 
-Upload a file into the knowledge graph. **Asynchronous** (server v0.15.0+): enqueues the build, returns a job id at once. Record one ledger entry and **return immediately — no polling, no waiting.**
+Upload a file into the knowledge graph (async per `## AI Behavior` above — record one ledger entry, no polling).
 ```bash
 RESP=$(curl -sS -X POST "${ENDPOINT}/documents/upload" \
   -H "X-API-KEY: ${API_KEY}" -H "User-Agent: transcendence-memory-skill/0.4" \
