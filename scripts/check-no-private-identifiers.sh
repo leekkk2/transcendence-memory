@@ -1,50 +1,90 @@
 #!/usr/bin/env bash
-# Forbid private business identifiers from entering the open-source repo.
+# Pre-commit guard preventing accidental commit of words/identifiers
+# specific to the operator's deployment (internal hostnames, vendor scope
+# codes, project codenames, sprint codes, device names, etc.).
 #
-# Triggers on: vendor scope codes, internal product names, deploy hostnames,
-# specific device names, internal sprint codes. False-positive risk is low
-# because we use \b word boundaries for short bare names.
+# The dictionary is **operator-local** and intentionally NOT stored in this
+# repository. Each operator configures their own wordlist via git config or
+# an external file. If no dictionary is configured, this hook is a silent
+# no-op — open-source contributors do not need to set anything.
 #
-# Exit 0 = clean, exit 1 = leak found (print offending lines).
+# Operator setup (one of):
 #
-# Wire as a git pre-commit hook (recommended) or a CI step:
+#   git config --local hooks.privateIdentifiersTier1 '<extended-regex>'
+#   git config --local hooks.privateIdentifiersTier2 '<extended-regex>'
+#
+# or via an external file (one assignment per line, `tier1=<regex>` /
+# `tier2=<regex>`):
+#
+#   git config --local hooks.privateIdentifiersFile ~/.config/tm-guard/words.txt
+#
+# Tier 1 is intended for unambiguous compound names that can be grepped
+# literally (low false-positive risk). Tier 2 is for short bare names that
+# need word boundaries — supply your own \b...\b wrapping.
+#
+# Wire as a pre-commit hook:
 #   git config core.hooksPath .githooks
-#   ln -sf ../../scripts/check-no-private-identifiers.sh .githooks/pre-commit
+#
+# See CONTRIBUTING.md.
+
 set -euo pipefail
 
-# Determine scope: staged files only when run as a git hook; otherwise full tree.
-if [ -n "${GIT_INDEX_FILE:-}" ] || git rev-parse --git-dir >/dev/null 2>&1 && \
-   git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(py|md|yml|yaml|sh|toml|cfg|json)$'; then
-  TARGETS=$(git diff --cached --name-only --diff-filter=ACMR -- \
-    '*.py' '*.md' '*.yml' '*.yaml' '*.sh' '*.toml' '*.cfg' '*.json' 2>/dev/null \
-    | grep -v 'check-no-private-identifiers' || true)
-  CONTEXT="staged"
-else
-  # exclude this very script (its forbidden-pattern strings would self-trigger)
-  TARGETS=$(find scripts tests docs -type f \
-    \( -name '*.py' -o -name '*.md' -o -name '*.yml' -o -name '*.yaml' \
-       -o -name '*.sh' -o -name '*.toml' -o -name '*.cfg' -o -name '*.json' \) \
-    2>/dev/null | grep -v __pycache__ | grep -v 'check-no-private-identifiers' || true)
-  CONTEXT="full tree"
+TIER1=$(git config --local hooks.privateIdentifiersTier1 2>/dev/null || true)
+TIER2=$(git config --local hooks.privateIdentifiersTier2 2>/dev/null || true)
+
+# Optional: external file. Format: lines `tier1=<regex>` and `tier2=<regex>`.
+DICT_FILE=$(git config --local hooks.privateIdentifiersFile 2>/dev/null || true)
+if [ -n "$DICT_FILE" ] && [ -f "$DICT_FILE" ]; then
+  T1_FROM_FILE=$(grep -E '^tier1=' "$DICT_FILE" | head -1 | cut -d= -f2-)
+  T2_FROM_FILE=$(grep -E '^tier2=' "$DICT_FILE" | head -1 | cut -d= -f2-)
+  [ -n "$T1_FROM_FILE" ] && TIER1="$T1_FROM_FILE"
+  [ -n "$T2_FROM_FILE" ] && TIER2="$T2_FROM_FILE"
 fi
 
-if [ -z "$TARGETS" ]; then
+# No dictionary configured → silent no-op (open-source-contributor friendly).
+if [ -z "$TIER1" ] && [ -z "$TIER2" ]; then
   exit 0
 fi
 
-# Two-tier check to balance precision:
-# - tier 1: unambiguous compound names (literal grep, no false positives)
-# - tier 2: short bare names that need word boundaries (extended regex)
-TIER1='{{REDACTED-PRIVATE-WORDLIST-T1}}'
-TIER2='{{REDACTED-PRIVATE-WORDLIST-T2}}'
+# Pick targets. When run as a git hook, GIT_INDEX_FILE is set or there are
+# staged changes; otherwise scan the full tracked tree (manual / CI use).
+if git diff --cached --name-only --diff-filter=ACMR | grep -q .; then
+  TARGETS=$(git diff --cached --name-only --diff-filter=ACMR \
+    | grep -v 'check-no-private-identifiers' || true)
+  CONTEXT="staged"
+else
+  TARGETS=$(git ls-files \
+    | grep -v 'check-no-private-identifiers' || true)
+  CONTEXT="full tree"
+fi
 
+[ -z "$TARGETS" ] && exit 0
+
+FAIL=0
 HITS_FILE=$(mktemp)
 trap 'rm -f "$HITS_FILE"' EXIT
 
-echo "$TARGETS" | tr '\n' '\0' | xargs -0 -I{} grep -InE "$TIER1" {} 2>/dev/null >> "$HITS_FILE" || true
-echo "$TARGETS" | tr '\n' '\0' | xargs -0 -I{} grep -InE "$TIER2" {} 2>/dev/null >> "$HITS_FILE" || true
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  [ -f "$f" ] || continue
+  # Skip binary files (avoid corrupting grep output and false positives).
+  if file --mime "$f" 2>/dev/null | grep -q "charset=binary"; then
+    continue
+  fi
+  if [ -n "$TIER1" ]; then
+    if grep -EnH -- "$TIER1" "$f" 2>/dev/null >>"$HITS_FILE"; then
+      FAIL=1
+    fi
+  fi
+  if [ -n "$TIER2" ]; then
+    if grep -EnH -- "$TIER2" "$f" 2>/dev/null >>"$HITS_FILE"; then
+      FAIL=1
+    fi
+  fi
+done <<< "$TARGETS"
 
-if [ -s "$HITS_FILE" ]; then
+if [ $FAIL -ne 0 ]; then
+  echo "" >&2
   echo "ERROR: private business identifiers found in $CONTEXT files." >&2
   echo "Replace with generic placeholders before committing. See CONTRIBUTING.md." >&2
   echo "" >&2
