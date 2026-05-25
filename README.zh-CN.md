@@ -33,6 +33,8 @@ npx skills add https://github.com/leekkk2/transcendence-memory --skill transcend
 
 `/reload-plugins` 后，四个生命周期 hook 与 `/tm` 命令立即生效，无需重启会话。
 
+> **AI agent 注意**：`/tm ...` 通过 `SlashCommand` 工具调用，**不是** `PATH` 上的可执行文件。不要在 shell 里跑 `tm ...`，会以 `command not found` 失败。完整调用契约见 `skills/transcendence-memory/SKILL.md`。
+
 ## 快速开始
 
 ### 1. 部署后端
