@@ -39,6 +39,42 @@ After `/reload-plugins`, the four lifecycle hooks (SessionStart / UserPromptSubm
 - **Progressive loading**: read `references/setup.md` during first-time setup, then this file is enough for day-to-day use
 - **Two paths, no auto-bridge**: `/ingest-memory/objects` writes to LanceDB (served by `/search`); `/documents/text` and `/documents/upload` write to the RAG-Anything knowledge graph (served by `/query`). Data ingested through one path is **not** auto-promoted to the other. When you need both `/search` snippets and `/query` synthesis, you must dual-write. See `references/best-practices.md`.
 
+## AI Behavior — `/tm` is a slash command, NEVER a shell binary (STRICT)
+
+`/tm` is a Claude Code **slash command** invoked through the `SlashCommand` tool.
+It is NOT a shell binary. The following will always fail with `command not found`:
+
+```bash
+$ tm search "..."          # ❌ command not found
+$ tm remember "..."        # ❌ command not found
+$ /tm search "..."         # ❌ no such file or directory
+```
+
+The AI MUST use one of these two paths only:
+
+1. **Preferred — `SlashCommand` tool** (when running inside Claude Code):
+   ```
+   SlashCommand({ command: "/tm search <query>" })
+   ```
+
+2. **Fallback — direct HTTP via Bash + curl** (when `SlashCommand` is unavailable
+   or the AI is outside Claude Code):
+   ```bash
+   ENDPOINT="$(grep '^endpoint' ~/.transcendence-memory/config.toml | cut -d'"' -f2)"
+   API_KEY="$(grep '^api_key' ~/.transcendence-memory/config.toml | cut -d'"' -f2)"
+   CONTAINER="$(grep '^container' ~/.transcendence-memory/config.toml | cut -d'"' -f2)"
+   curl -sS -X POST "$ENDPOINT/search" \
+     -H "X-API-KEY: $API_KEY" -H "Content-Type: application/json" \
+     -d "{\"container\":\"$CONTAINER\",\"query\":\"<query>\",\"topk\":5}"
+   ```
+
+If the AI catches itself about to invoke `Bash({command: "tm ..."})` or
+`Bash({command: "/tm ..."})`, STOP and switch to one of the two paths above.
+The same applies to the long-form alias `/transcendence-memory <command>`.
+
+> The `Example` column in the command table below shows the slash-command form.
+> Invoke via the `SlashCommand` tool. For raw HTTP fallback, see `references/api-reference.md`.
+
 ## AI Behavior — async ingestion silent-mode (v0.4.1+, STRICT)
 
 Any call that returns an integer `pid` / `job_id` from a server v0.15.0+ KG-write endpoint (`/tm upload`, raw `POST /documents/text`, `POST /documents/upload`) is **fire-and-forget**. HTTP already returned — the task is handed off. The AI **MUST**:
