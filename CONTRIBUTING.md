@@ -20,30 +20,52 @@ Use [GitHub Issues](https://github.com/leekkk2/transcendence-memory/issues) with
 
 This is a public open-source repository. **Do not commit vendor-specific business identifiers** — internal scope codes, internal product names, deploy hostnames, device names, sprint codes, etc. Use generic placeholders in docs, scripts, comments, and commit messages:
 
-| Don't write | Use instead |
+| Category | Generic placeholders |
 |---|---|
-| Internal scope codes (e.g. private team / personal credential labels) | `personal` / `team` / `shared` |
-| Internal product / app names | `your-app` / `example-app` |
-| Specific deploy hostnames | `example-host` / `memory.example.com` |
-| Specific device names | `device-x` / `host-y` |
-| Internal sprint codes (e.g. `XX-NNN`) | drop them or use generic `cleanup-YYYY-MM` |
+| Credential / tenancy scope labels | `personal` / `team` / `shared` |
+| Product / app names | `your-app` / `example-app` |
+| Deploy hostnames | `example-host` / `memory.example.com` |
+| Device names | `device-x` / `host-y` |
+| Sprint / cleanup codes | `cleanup-YYYY-MM` |
 
-### Pre-commit guard
+### Optional private-identifier pre-commit guard
 
-A one-shot guard checks for the most common leakable patterns. Wire it up locally:
+If your local fork tracks identifiers that should never leave your machine
+(internal hostnames, vendor codes, project codenames, etc.), you can opt into
+the pre-commit guard by setting either:
+
+```bash
+# Tier 1: unambiguous compound names (literal extended-regex, low FP risk)
+git config --local hooks.privateIdentifiersTier1 '<your-extended-regex>'
+
+# Tier 2: short bare names — supply your own \b...\b word boundaries
+git config --local hooks.privateIdentifiersTier2 '<your-extended-regex>'
+```
+
+Or by pointing it at an external file:
+
+```bash
+git config --local hooks.privateIdentifiersFile ~/.config/tm-guard/words.txt
+# file format: one assignment per line:
+#   tier1=<extended-regex>
+#   tier2=<extended-regex>
+```
+
+Then enable the hooks path:
 
 ```bash
 git config core.hooksPath .githooks
-# Now every git commit runs scripts/check-no-private-identifiers.sh on staged files
 ```
 
-You can also run it ad-hoc against the full tree:
+The hook is a **silent no-op** if neither tier is configured — open-source
+contributors do not need to set anything. You can also run the script ad-hoc:
 
 ```bash
 bash scripts/check-no-private-identifiers.sh
 ```
 
-If you intentionally need one of the flagged words (e.g. a legitimate code example), add a tightly-scoped allow comment and propose the rule update in the PR.
+The dictionary lives only in your local `.git/config` (or an external file
+outside the repo). The script itself contains no business-specific terms.
 
 ## License
 
