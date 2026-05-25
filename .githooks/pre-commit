@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run private-identifier guard before allowing commit.
+exec "$(git rev-parse --show-toplevel)/scripts/check-no-private-identifiers.sh"
