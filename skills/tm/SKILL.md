@@ -1,8 +1,15 @@
 ---
 name: tm
-description: Short alias for `transcendence-memory`. Use when the user types `/tm` or invokes `Skill(skill: "tm")`. Provides the same long-term memory capability — semantic search, memory storage, multimodal RAG queries, container management — backed by the self-hosted transcendence-memory-server. This alias exists because Claude Code skill frontmatter does not support `aliases:` natively, so the canonical name `transcendence-memory` and the short form `tm` are exposed as two SKILL.md files pointing at the same engine.
+description: >-
+  Short alias for `transcendence-memory`. Use when the user types `/tm` or
+  invokes `Skill(skill: "tm")`. Provides the same long-term memory capability
+  — semantic search, memory storage, multimodal RAG queries, container
+  management — backed by the self-hosted transcendence-memory-server. This
+  alias exists because Claude Code skill frontmatter does not support
+  `aliases:` natively, so the canonical name `transcendence-memory` and the
+  short form `tm` are exposed as two SKILL.md files pointing at the same
+  engine.
 allowed-tools: Bash, Read, Write, Grep, Glob
-argument-hint: "[command] [args...]"
 ---
 
 ## What this alias does
