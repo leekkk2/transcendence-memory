@@ -32,6 +32,8 @@ Or use the plugin marketplace inside a Claude Code session:
 
 After `/reload-plugins`, the four lifecycle hooks and the `/tm` slash commands are immediately active — no session restart required.
 
+> **Note for AI agents reading this:** `/tm ...` is invoked via the `SlashCommand` tool — it is **not** a binary on `PATH`. Don't run `tm ...` in a shell; it will fail with `command not found`. See `skills/transcendence-memory/SKILL.md` for the strict invocation contract.
+
 ## Quick Start
 
 ### 1. Deploy the backend

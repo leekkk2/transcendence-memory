@@ -16,6 +16,8 @@ allowed-tools: Bash, Read, Write, Grep, Glob
 
 `tm` is the **short alias** for the `transcendence-memory` skill. They share the same configuration (`~/.transcendence-memory/config.toml`), the same backend, the same commands.
 
+> **Important — `/tm` is a slash command, NOT a shell binary.** If you find yourself about to run `Bash({command: "tm ..."})` or `Bash({command: "/tm ..."})`, that will fail with `command not found`. Invoke via the `SlashCommand` tool instead — e.g. `SlashCommand({ command: "/tm search <query>" })`. For the curl-based HTTP fallback, see the canonical SKILL.md's "AI Behavior — `/tm` is a slash command" section.
+
 ## How to execute
 
 Read the canonical SKILL.md and follow its instructions verbatim:
