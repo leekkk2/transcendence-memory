@@ -273,3 +273,107 @@ curl -sS -X POST "${ENDPOINT}/search" -H "X-API-KEY: ${API_KEY}" \
   - 跨语言检索(reranker 在语义对齐上比纯 vec 更准)
   - 业务关键搜索(用户搜不到会卡壳)
 - **per-request 启用**:`/search` / `/query` 带 `"rerank": true`,无需改 routes
+
+---
+
+## 7. 结构化记忆编写工艺
+
+未来召回该记忆的 agent 使用的是**模糊自然语言**，不是当初的 ASCII id。在写
+高价值 memory 时按下面三层结构展开，能显著提升后续命中率。
+
+### 7.1 标题同义词头部
+
+> ❌ `[ASC + Play metadata fix @ project-a 1.0.1]`
+> ✅ `[送审 / 上架 / 提审 · 商店元数据修正 @ 2026-05-26 project-a 1.0.1 实战]`
+
+标题中至少包含 2-3 个同义词，覆盖中英常见说法（动词 + 实体 + 场景），让模
+糊检索（"怎么送审"、"上架失败怎么办"）都能命中同一条记忆。
+
+### 7.2 「何时召回我」章节
+
+正文开头加一行 `When to recall me / 何时召回我`，明确列出召回触发面：
+
+- **动词**：送审、提审、撤回、发版、回滚 / submit、release、rollback
+- **实体**：应用名、模块名、子系统名（用占位名如 `your-project` /
+  `team-alpha`，避免泄漏真实命名）
+- **提问句式**：怎么做、出错怎么办、为什么 / how do I, what if it fails,
+  why does X happen
+
+这一行同时是给未来的自己留的"语义路标"——若 agent 检索时打到这行，就知道
+落在正确的主题，再读详细内容。
+
+### 7.3 双语冗余 Tags
+
+每条 memory 同时打技术 id 与自然语言 tag，让两种检索路径都能命中：
+
+```json
+{
+  "tags": ["asc", "release", "送审", "上架", "应用名称"]
+}
+```
+
+技术 id 给精确召回（`tag=release`），自然语言 tag 给模糊召回与人工浏览。
+
+---
+
+## 8. 高密度索引卡设计
+
+针对**反复回查的 SOP、流程、决策树**，单独创建一张「索引卡」memory，统一吸
+收所有同义检索。
+
+特征：
+
+- 卡片标题囊括所有同义词
+- 卡片正文是高关键词密度入口，逐步链接到详细 memory 的 id 或 chunkId
+- 用来吸收模糊查询：命中卡片后顺藤摸瓜读详情
+
+模板：
+
+```text
+[索引卡 · 部署 / Deploy / Release · 完整 SOP]
+
+When to recall me: deploy 部署 launch 发版 上线 release 流程 ci/cd
+回滚 rollback 端口冲突 docker compose
+
+Steps:
+1. ... (详见 mem-deploy-step1)
+2. ... (详见 mem-deploy-step2)
+...
+
+Related memories: mem-deploy-step1, mem-deploy-rollback-sop, ...
+```
+
+经验值：每 50–100 条同类 memory 建一张索引卡，召回率会有显著拐点。索引卡
+本身不可替代细粒度 memory，只是模糊查询的"目录页"。
+
+---
+
+## 9. 凭证脱敏 Checklist
+
+写入 memory 之前，确认文本中**不含**：
+
+- [ ] OpenAI / Anthropic / Stripe API key（`sk-...`、`pk_live_...`、`sk_live_...`）
+- [ ] Slack / GitHub token（`xoxb-...`、`xoxp-...`、`ghp_...`、`gho_...`）
+- [ ] AWS access key id（`AKIA...`）
+- [ ] `Authorization: Bearer <token>`、JWT 三段式 token
+- [ ] URL 内嵌的 `user:password`（如 `postgres://u:p@host`）
+- [ ] PEM 私钥块（`-----BEGIN ... PRIVATE KEY-----`）
+- [ ] `.env` 内的明文 secret 值
+
+skill 的 PostToolUse + Stop hook 已经自动调用 `redact_secrets()`（见
+[`hooks/common.sh`](../../../hooks/common.sh)），但**程序化批量入库时必须
+自己 pipe 一次**，否则 secret 会直接落进向量库。
+
+正确范例：
+
+```bash
+# 批量入库走 batch-ingest.py，加 --redact 即可
+python3 scripts/batch-ingest.py "$ENDPOINT" "$API_KEY" "$CONTAINER" data.jsonl --redact
+
+# 自定义脚本写入前，先 source common.sh 调用 redact_secrets
+source hooks/common.sh
+clean_text=$(printf '%s' "$raw_text" | redact_secrets)
+```
+
+如果发现历史 memory 已经混入 secret，按 [`retrofit-playbook.md`](./retrofit-playbook.md)
+做事后清洗，不要直接对老库做覆盖写入。
