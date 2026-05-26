@@ -39,6 +39,72 @@ After `/reload-plugins`, the four lifecycle hooks (SessionStart / UserPromptSubm
 - **Progressive loading**: read `references/setup.md` during first-time setup, then this file is enough for day-to-day use
 - **Two paths, no auto-bridge**: `/ingest-memory/objects` writes to LanceDB (served by `/search`); `/documents/text` and `/documents/upload` write to the RAG-Anything knowledge graph (served by `/query`). Data ingested through one path is **not** auto-promoted to the other. When you need both `/search` snippets and `/query` synthesis, you must dual-write. See `references/best-practices.md`.
 
+## Behavior Conventions
+
+These are the conventions the skill expects agents to follow when reading or
+writing memories. They protect search recall and prevent credential leaks.
+
+### 1. When to recall
+
+- At session start, when the upcoming work obviously depends on prior decisions.
+- When the user mentions verbs like "before / last time / previously / 上次 /
+  之前 / 我们之前怎么做的".
+- Before answering any question that references project history, prior
+  decisions, or recurring SOPs.
+
+### 2. When to remember
+
+- After a high-value conclusion is reached (decision, lesson, SOP, postmortem,
+  resolved bug root cause).
+- After completing a sprint, shipping a feature, or closing an incident.
+- **Never** for transient context — file diffs, debug traces, raw tool output,
+  ephemeral REPL output.
+
+### 3. Title + trigger-words pattern
+
+Agents that recall memory later use **fuzzy natural-language phrases**, not
+the original ASCII id. When writing a high-value memory, structure it as:
+
+1. **Title with synonyms** — at least 2-3 of the verbs / nouns a future
+   searcher might type, mixing English and the working language.
+2. **A "When to recall me" line** listing verbs + entities + likely question
+   phrasings.
+3. **Bilingual tags** — mix technical ids (`deploy`, `auth`) and natural-
+   language terms (`部署`, `登录`).
+
+See `references/best-practices.<lang>.md` §7 for the full template, and §8 for
+the index-card pattern that consolidates many memories around one fuzzy entry
+point.
+
+### 4. Credential redaction (auto)
+
+The skill auto-redacts common secret patterns through the PostToolUse and Stop
+hooks via `redact_secrets()` in [`hooks/common.sh`](../../hooks/common.sh). If
+you ingest memories programmatically through another path (custom script,
+batch importer, manual `curl`), call `redact_secrets()` yourself or pass
+`--redact` to `scripts/batch-ingest.py`. Patterns covered:
+
+- API keys: `sk-...`, `xoxb-...`, `xoxp-...`, `ghp_...`, `gho_...`,
+  `pk_live_...`, `sk_live_...`, `AKIA...`
+- `Authorization: Bearer ...` headers
+- URL-embedded credentials: `scheme://user:password@host`
+- PEM private-key blocks: `-----BEGIN ... PRIVATE KEY-----`
+- JWT-like triple-segment tokens
+
+Sample memory structure:
+
+```
+[Decision / 决策 · Release SOP · 部署 / launch — sprint port conflict]
+
+When to recall me: deploy 部署 launch sprint port conflict docker compose
+端口 冲突 -- what was the resolution?
+
+Decision: ...
+Tags: deploy, docker, port-conflict, 部署, 端口冲突
+```
+
+See `references/best-practices.<lang>.md` §9 for the full redaction checklist.
+
 ## AI Behavior — `/tm` is a slash command, NEVER a shell binary (STRICT)
 
 `/tm` is a Claude Code **slash command** invoked through the `SlashCommand` tool.

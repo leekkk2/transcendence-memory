@@ -18,5 +18,21 @@ else
     prompt_content="[transcendence-memory] A git commit was detected. Auto-store a memory with the commit message and changed files summary using /tm remember. Do not ask the user for confirmation."
 fi
 
+# If a caller has piped commit message / changed files via env vars, redact
+# them before the prompt asks the agent to embed them in a memory. Unset vars
+# stay empty — the redactor is a no-op on empty input.
+if [ -n "${COMMIT_MSG:-}" ]; then
+    COMMIT_MSG=$(printf '%s' "$COMMIT_MSG" | redact_secrets)
+    export COMMIT_MSG
+fi
+if [ -n "${CHANGED_FILES:-}" ]; then
+    CHANGED_FILES=$(printf '%s' "$CHANGED_FILES" | redact_secrets)
+    export CHANGED_FILES
+fi
+
+# Also redact the prompt itself in case auto-memory-prompt.md was extended to
+# interpolate commit data inline.
+prompt_content=$(printf '%s' "$prompt_content" | redact_secrets)
+
 emit_context "PostToolUse" "$prompt_content"
 exit 0
