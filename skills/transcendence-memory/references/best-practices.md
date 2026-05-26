@@ -289,3 +289,118 @@ curl -sS -X POST "${ENDPOINT}/search" -H "X-API-KEY: ${API_KEY}" \
   - Cross-lingual retrieval (rerankers beat pure vec on semantic alignment)
   - Business-critical search (users get stuck if results are off)
 - **Per-request**: pass `"rerank": true` to `/search`/`/query`, no routes edit needed
+
+---
+
+## 7. Structured Memory Writing Conventions
+
+The agent that retrieves a memory later uses **fuzzy natural-language phrases**,
+not the original ASCII id. When writing a high-value memory, follow the three
+layers below — recall hit-rate goes up dramatically.
+
+### 7.1 Title with synonyms
+
+> ❌ `[ASC + Play metadata fix @ project-a 1.0.1]`
+> ✅ `[Submit / Release / Store-listing · store metadata fix @ 2026-05-26 project-a 1.0.1 lessons]`
+
+Pack at least 2-3 synonyms into the title — verbs, entities, scene — so fuzzy
+queries ("how do we submit?", "store rejection?") hit the same memory.
+
+### 7.2 "When to recall me" line
+
+Put a `When to recall me` line at the top of the body listing the recall
+surface:
+
+- **Verbs**: submit, release, rollback, ship, revert, 提审, 发版, 回滚
+- **Entities**: app name, module name, subsystem (use placeholder names like
+  `your-project` / `team-alpha`, do **not** leak real internal names)
+- **Question shapes**: how do I…, what if it fails…, why does X happen…
+
+This line doubles as a "semantic landmark" for your future self — if the agent
+hits this line during search, it knows it landed on the right topic before
+reading the body.
+
+### 7.3 Bilingual redundant tags
+
+Tag each memory with both technical ids and natural-language terms so both
+retrieval paths hit:
+
+```json
+{
+  "tags": ["asc", "release", "submit", "store-listing", "送审", "上架"]
+}
+```
+
+Technical ids serve exact filters (`tag=release`); natural-language tags serve
+fuzzy retrieval and human browsing.
+
+---
+
+## 8. High-Density Index Cards
+
+For **SOPs, workflows, and decision trees that get re-asked repeatedly**,
+create a dedicated "index card" memory that absorbs all the fuzzy-query
+variants.
+
+Properties:
+
+- The card title carries every synonym someone might search for
+- The body is a high-keyword-density entry point, linking to detailed memory
+  ids / chunkIds
+- The card absorbs fuzzy queries: once the agent hits it, it follows the links
+  to the detail memories
+
+Template:
+
+```text
+[Index Card · Deploy / Release / 部署 · full SOP]
+
+When to recall me: deploy 部署 launch 发版 ship release pipeline ci/cd
+rollback 回滚 port conflict docker compose
+
+Steps:
+1. ... (see mem-deploy-step1)
+2. ... (see mem-deploy-step2)
+...
+
+Related memories: mem-deploy-step1, mem-deploy-rollback-sop, ...
+```
+
+Rule of thumb: build one index card per 50–100 same-topic memories — recall
+quality has a clear inflection point there. Index cards do **not** replace
+fine-grained memories; they are the "table of contents" for fuzzy searches.
+
+---
+
+## 9. Credential Redaction Checklist
+
+Before writing a memory, verify the text does **not** contain:
+
+- [ ] OpenAI / Anthropic / Stripe API keys (`sk-...`, `pk_live_...`,
+      `sk_live_...`)
+- [ ] Slack / GitHub tokens (`xoxb-...`, `xoxp-...`, `ghp_...`, `gho_...`)
+- [ ] AWS access key id (`AKIA...`)
+- [ ] `Authorization: Bearer <token>`, JWT triple-segment tokens
+- [ ] URL-embedded `user:password` (e.g. `postgres://u:p@host`)
+- [ ] PEM private-key blocks (`-----BEGIN ... PRIVATE KEY-----`)
+- [ ] Plaintext secret values from `.env`
+
+The PostToolUse + Stop hooks already pipe captured text through
+`redact_secrets()` (see [`hooks/common.sh`](../../../hooks/common.sh)). But
+**any programmatic bulk ingest must pipe explicitly** — otherwise secrets land
+directly in the vector store.
+
+Correct patterns:
+
+```bash
+# Use batch-ingest.py with --redact for bulk import
+python3 scripts/batch-ingest.py "$ENDPOINT" "$API_KEY" "$CONTAINER" data.jsonl --redact
+
+# In a custom script, source common.sh and pipe through redact_secrets
+source hooks/common.sh
+clean_text=$(printf '%s' "$raw_text" | redact_secrets)
+```
+
+If you discover secrets already in historical memories, run the
+[`retrofit-playbook.md`](./retrofit-playbook.md) cleanup pass instead of
+blindly overwriting the old container.
