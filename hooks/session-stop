@@ -93,6 +93,9 @@ PYEOF
 
 [ -z "$summary" ] && exit 0
 
+# Redact common secret patterns before persisting transcript text.
+summary=$(printf '%s' "$summary" | redact_secrets)
+
 project=$(basename "$(pwd)" 2>/dev/null || echo "unknown")
 timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d")
 mem_text="[session-summary] project:${project} | ${timestamp} | ${summary}"
