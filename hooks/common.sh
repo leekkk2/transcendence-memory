@@ -58,3 +58,33 @@ tm_store() {
         -d "{\"container\":\"${TM_CONTAINER}\",\"objects\":[{\"id\":\"${2}\",\"text\":\"${escaped_text}\",\"tags\":${3:-[]}}],\"auto_embed\":true}" \
         2>/dev/null >/dev/null || true
 }
+
+# redact_secrets: 在写入 memory / 传递给 LLM 前，对常见 secret 模式做最小占位替换。
+# 用法: echo "$text" | redact_secrets       (stdin)
+#       redact_secrets "$text"              (单参数)
+# 覆盖的模式: OpenAI/Anthropic sk-*, Stripe pk_live_/sk_live_, Slack xoxb-/xoxp-,
+#            GitHub ghp_/gho_, AWS AKIA, Bearer token, URL-embedded password,
+#            PRIVATE KEY block, JWT-like triple-segment token。
+# 设计取舍: 仅 sed/正则、零依赖、行内替换；不做语义识别，宁可漏判也不破坏正常文本。
+redact_secrets() {
+    local input
+    if [ "$#" -ge 1 ]; then
+        input="$1"
+    else
+        input=$(cat)
+    fi
+    printf '%s' "$input" | sed -E \
+        -e 's/sk-[A-Za-z0-9_-]{20,}/sk-***REDACTED***/g' \
+        -e 's/pk_live_[A-Za-z0-9]{20,}/pk_live_***REDACTED***/g' \
+        -e 's/sk_live_[A-Za-z0-9]{20,}/sk_live_***REDACTED***/g' \
+        -e 's/xoxb-[A-Za-z0-9-]{20,}/xoxb-***REDACTED***/g' \
+        -e 's/xoxp-[A-Za-z0-9-]{20,}/xoxp-***REDACTED***/g' \
+        -e 's/ghp_[A-Za-z0-9]{30,}/ghp_***REDACTED***/g' \
+        -e 's/gho_[A-Za-z0-9]{30,}/gho_***REDACTED***/g' \
+        -e 's/AKIA[A-Z0-9]{16}/AKIA***REDACTED***/g' \
+        -e 's/([Aa]uthorization:[[:space:]]*[Bb]earer[[:space:]]+)[A-Za-z0-9._-]+/\1***REDACTED***/g' \
+        -e 's#(https?://[^/[:space:]]*:)[^@[:space:]]+(@)#\1***REDACTED***\2#g' \
+        -e 's#([a-z][a-z0-9+.-]*://[^/[:space:]]*:)[^@[:space:]]+(@)#\1***REDACTED***\2#g' \
+        -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]*-----END [A-Z ]*PRIVATE KEY-----/***PRIVATE_KEY_REDACTED***/g' \
+        -e 's/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/***JWT_REDACTED***/g'
+}
