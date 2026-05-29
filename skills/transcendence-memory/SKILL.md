@@ -18,19 +18,41 @@ Core capabilities:
 
 ## Install
 
-```bash
-npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory
-```
+### Claude Code (recommended)
 
-Or inside a Claude Code session:
+Inside a Claude Code session:
 
 ```text
 /plugin marketplace add leekkk2/transcendence-memory
-/plugin install transcendence-memory
-/reload-plugins
+/plugin install transcendence-memory@transcendence-memory
 ```
 
-After `/reload-plugins`, the four lifecycle hooks (SessionStart / UserPromptSubmit / PostToolUse / Stop) and the `/tm` slash commands are immediately available — no session restart required.
+> The `@transcendence-memory` suffix names the marketplace (set by `.claude-plugin/marketplace.json` `.name`). Always include it — Claude Code resolves plugin installs by `<plugin>@<marketplace>` per the [official docs](https://code.claude.com/docs/en/discover-plugins).
+
+Or use the GUI: run `/plugin` to open the plugin manager → **Discover** tab → search "transcendence-memory" → Install.
+
+**After install, restart Claude Code.** `/reload-plugins` loads hooks + skill body into context but does **not** rebuild the slash-command parser (known issue [anthropics/claude-code#37862](https://github.com/anthropics/claude-code/issues/37862)) — `/tm` / `/transcendence-memory` slash commands will only register after a full restart. The four lifecycle hooks (SessionStart / UserPromptSubmit / PostToolUse / Stop) are active immediately on next launch.
+
+> Updating later: `/plugin update transcendence-memory@transcendence-memory` (Claude Code manages the cache).
+> Or use the bundled `/tm upgrade` command, which `git pull --ff-only`s the installed clone (see Gotchas if it reports `fast-forward` failure).
+
+### Other agents (Cursor / Codex / manual git clone)
+
+For agents without a Claude Code-compatible plugin manager:
+
+```bash
+# Community installer (3rd-party — wraps a git clone into a stable layout)
+npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory
+```
+
+Or clone directly into the host agent's skill directory:
+
+```bash
+git clone https://github.com/leekkk2/transcendence-memory.git \
+  ~/.agents/skills/transcendence-memory
+```
+
+> Cursor's directory is `~/.cursor/skills/`; consult your agent's docs for the canonical path. `/tm upgrade` auto-detects the install root from a list of well-known paths.
 
 ## Principles
 
