@@ -1,6 +1,6 @@
 ---
 name: transcendence-memory
-description: Use when connecting to a self-hosted memory backend, searching, storing, or managing memories, importing connection tokens, or troubleshooting retrieval issues. Use this skill whenever the user mentions memory search, RAG retrieval, embedding, memory storage, multimodal document upload, knowledge queries, or wants to connect to a memory service, even if they do not explicitly say "transcendence-memory".
+description: Use when the user mentions memory search, RAG retrieval, knowledge queries, embedding rebuild, document upload, connection tokens, or invokes "/tm" / "transcendence-memory" — including indirect recall like "what did we decide last time", "上次怎么处理的", "之前的方案". Covers searching, storing, multimodal RAG queries, and troubleshooting against a self-hosted memory backend.
 allowed-tools: Bash, Read, Write, Grep, Glob
 argument-hint: "[command] [args...]"
 ---
@@ -159,7 +159,7 @@ Any call that returns an integer `pid` / `job_id` from a server v0.15.0+ KG-writ
 
 ## Built-in Commands
 
-These commands can be invoked through `/transcendence-memory <command>` or the short form `/tm <command>`:
+These commands can be invoked through `/transcendence-memory <command>` or the short form `/tm <command>`. **Full HTTP / curl / argument schemas for every command live in [`references/commands.md`](./references/commands.md)** — keep this table for at-a-glance discovery, jump to the reference when you need to call one.
 
 | Command | Purpose | Example |
 |------|------|------|
@@ -182,317 +182,22 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `auto status` | Show auto-memory configuration | `/tm auto status` |
 | `upgrade` | Pull latest skill scripts from the upstream repo | `/tm upgrade` |
 
-### Command: `connect`
-
-Import a connection token or configure the connection manually.
-
-**Token mode** (recommended):
-```bash
-# Automatically run by the agent after it receives a token:
-TOKEN="$1"  # base64 token provided by the user
-DECODED=$(echo "$TOKEN" | base64 -d)
-ENDPOINT=$(echo "$DECODED" | python3 -c "import sys,json; print(json.load(sys.stdin)['endpoint'])")
-API_KEY=$(echo "$DECODED" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])")
-CONTAINER=$(echo "$DECODED" | python3 -c "import sys,json; print(json.load(sys.stdin)['container'])")
-
-mkdir -p ~/.transcendence-memory && chmod 700 ~/.transcendence-memory
-cat > ~/.transcendence-memory/config.toml << EOF
-[connection]
-endpoint = "$ENDPOINT"
-container = "$CONTAINER"
-
-[auth]
-mode = "api_key"
-api_key = "$API_KEY"
-EOF
-chmod 600 ~/.transcendence-memory/config.toml
-
-# Verify the connection
-curl -sS "$ENDPOINT/health"
-```
-
-**Manual mode**: ask the user for `endpoint`, `api_key`, and `container`, then write `config.toml`.
-
-### Command: `status`
-
-Check connection and server status:
-```bash
-# Read local config
-CONFIG="$HOME/.transcendence-memory/config.toml"
-ENDPOINT=$(grep '^endpoint' "$CONFIG" | sed 's/.*= *"//' | sed 's/".*//')
-API_KEY=$(grep '^api_key' "$CONFIG" | sed 's/.*= *"//' | sed 's/".*//')
-CONTAINER=$(grep '^container' "$CONFIG" | sed 's/.*= *"//' | sed 's/".*//')
-
-# Health check
-curl -sS "$ENDPOINT/health" | python3 -m json.tool
-
-# Authentication test
-curl -sS -X POST "$ENDPOINT/search" \
-  -H "X-API-KEY: $API_KEY" -H "Content-Type: application/json" \
-  -d "{\"container\":\"$CONTAINER\",\"query\":\"test\",\"topk\":1}"
-```
-
-### Command: `search`
-
-Single-container (default):
-```bash
-curl -sS -X POST "${ENDPOINT}/search" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "{\"container\":\"${CONTAINER}\",\"query\":\"$ARGUMENTS\",\"topk\":5}"
-```
-
-Fuzzy multi-container — `--match <pattern> <query>`:
-```bash
-PATTERN="$1"; shift; QUERY="$*"
-curl -sS -X POST "${ENDPOINT}/search" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "{\"container_pattern\":\"${PATTERN}\",\"query\":\"${QUERY}\",\"topk\":5}"
-```
-
-All containers — `--all <query>`:
-```bash
-QUERY="$*"
-curl -sS -X POST "${ENDPOINT}/search" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "{\"container_pattern\":\"\",\"query\":\"${QUERY}\",\"topk\":10}"
-```
-
-> 跨容器响应里每条 hit 会带 `container` 字段，并附 `containers` / `per_container_status` 用于诊断。`topk` 是合并后的全局上限，不是每容器独立。
-
-#### v0.11.0+：默认 union 双轨召回
-
-如果 server 端 `profiles.yaml` 设了 `union_search_default: true`，单 container 查询会**自动同时查 sibling `_openai` 镜像**（gemini-3072 + openai-1024 双轨召回），结果按 `(taskId, chunkId)` 去重后合并。响应里多了两个字段：
-
-- `union_applied: true` — 自动 union 触发
-- `degraded: true` — 至少一个目标容器超时 / 失败（默认 per-container 3s timeout）
-- `per_container_status: {<X>: 'ok', <X>_openai: 'ok' | 'timeout' | 'not_initialized'}`
-
-强制单容器查询（即使 server 启用了默认 union）：
-```bash
-curl -sS -X POST "${ENDPOINT}/search" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "{\"container\":\"${CONTAINER}\",\"query\":\"${QUERY}\",\"topk\":5,\"union\":false}"
-```
-
-强制 union（即使 server 默认关闭，且 sibling `_openai` 必须已存在）：
-```bash
-curl -sS -X POST "${ENDPOINT}/search" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "{\"container\":\"${CONTAINER}\",\"query\":\"${QUERY}\",\"topk\":5,\"union\":true}"
-```
-
-> 自定义 per-container timeout（v0.11.1+ 默认 12.0s，范围 0.5–30）：加 `\"per_container_timeout_s\":5.0`。生产端 subprocess cold-start 实测 5-10s（py + lancedb + lightrag import + table load + embed call），v0.12 in-process 化后可降回 3s。
-> 显式 `containers` / `container_pattern` 参数会跳过自动 union（用户已掌控全部目标）。
-
-#### Response schema (实测速查)
-
-`/search` 顶层返回的命中数组字段名是 **`results`**（不是 `hits`），每条命中的字段如下：
-
-```json
-{
-  "status": "ok",
-  "results": [
-    {
-      "score": 0.56,
-      "container": "my-container",
-      "taskId": "<source-task>",
-      "chunkId": "<taskId>#client-ingest#<idx>",
-      "docType": "client_ingest",
-      "sourcePath": "tasks/rag/containers/<container>/memory_objects.jsonl",
-      "section": "client_ingest",
-      "title": "",
-      "source": "",
-      "text": "...",
-      "tags": [],
-      "metadata": {}
-    }
-  ]
-}
-```
-
-**关键解析约定**：
-
-- 每条命中**没有顶级 `id` 字段**。`/ingest-memory/objects` 时给的 `id` 字段不会原样回流到 `results[].id`；下游需要按 `taskId + chunkId` 或 `text` 内容自行匹配
-- 同一条 ingest 的长文本**会被切成多个 chunks**（`chunkId` 末尾 `#<idx>` 是切片序号）；search 可能返回多条同 `taskId` 的不同 chunk
-- `title` 字段在多数情况下为空 `""`，即使 ingest 时显式给了；以 `text` 头几行为准
-- 详细字段定义见 [`references/api-reference.md` §POST /search](./references/api-reference.md#post-search)
-
-### Command: `remember`
-
-Quickly store one memory with an auto-generated ID and automatic embedding:
-```bash
-MEM_ID="mem-$(date +%s)"
-curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "{\"container\":\"${CONTAINER}\",\"objects\":[{\"id\":\"${MEM_ID}\",\"text\":\"$ARGUMENTS\",\"tags\":[]}],\"auto_embed\":true}"
-```
-
-### Command: `update`
-
-更新当前容器内某条记忆的文本（最常用的字段）。更新后必须执行 `/tm embed` 刷新索引。
-
-```bash
-MEM_ID="$1"; shift; NEW_TEXT="$*"
-curl -sS -X PUT "${ENDPOINT}/containers/${CONTAINER}/memories/${MEM_ID}" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1]}))' "${NEW_TEXT}")"
-echo "提示：执行 /tm embed 以刷新索引。"
-```
-
-> 需要同时更新 `title` / `tags` / `metadata` 时，直接走 Quick Reference 中的 PUT 调用即可。
-
-### Command: `containers`
-
-列出当前 endpoint 下的容器，可选模糊过滤：
-
-```bash
-PATTERN="${1:-}"
-URL="${ENDPOINT}/containers"
-[ -n "$PATTERN" ] && URL="${URL}?pattern=${PATTERN}"
-curl -sS "$URL" -H "X-API-KEY: ${API_KEY}"
-```
-
-示例：
-- `/tm containers` — 列出全部
-- `/tm containers my-project` — 列出名字里包含 `my-project` 的容器（大小写不敏感）
-
-### Command: `query`
-
-Run a multimodal RAG query with knowledge graph retrieval plus LLM answer generation:
-```bash
-curl -sS -X POST "${ENDPOINT}/query" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d "{\"query\":\"$ARGUMENTS\",\"container\":\"${CONTAINER}\",\"mode\":\"hybrid\",\"top_k\":60}"
-```
-
-> **Prerequisite**: `/query` only sees content ingested through `/documents/text` or `/documents/upload` (LanceDB-only memories via `/tm remember` won't synthesize). Dual-write: see `references/best-practices.md` §1.2. **Async semantics**: see [`## AI Behavior`](#ai-behavior--async-ingestion-silent-mode-v041-strict) above — do not poll.
-
-### Command: `upload`
-
-Upload a file into the knowledge graph (async per `## AI Behavior` above — record one ledger entry, no polling).
-```bash
-RESP=$(curl -sS -X POST "${ENDPOINT}/documents/upload" \
-  -H "X-API-KEY: ${API_KEY}" -H "User-Agent: transcendence-memory-skill/0.4" \
-  -F "file=@$1" -F "container=${CONTAINER}")
-echo "$RESP"
-# Record the job id (skipped automatically if an old sync server returns no id):
-echo "$RESP" | python3 "<skill-path>/scripts/job-ledger.py" add \
-  --endpoint "${ENDPOINT}" --container "${CONTAINER}" --kind upload --source "/tm upload"
-```
-
-### Command: `batch`
-
-Bulk ingest memories with the bundled script:
-```bash
-python3 <skill-path>/scripts/batch-ingest.py \
-  "${ENDPOINT}" "${API_KEY}" "${CONTAINER}" "$1" [options]
-```
-
-Supported options:
-
-| Option | Default | Purpose |
-|--------|---------|---------|
-| `--max-bytes N` | 512000 | 单批最大字节数 |
-| `--batch-size N` | 50 | 单批最大条数 |
-| `--redact` | off | 入库前对常见敏感信息脱敏（API key、token、私钥等） |
-| `--probe` | off | 入库前先探测 `/ingest-memory/contract` 确认接口 schema |
-| `--resume` | off | 基于进度文件跳过已成功的行（断点续传） |
-| `--failed-log F` | `<input>.failed.jsonl` | 失败对象写入指定文件 |
-| `--test-waf` | — | 自检模式（不入库），对比默认 UA 与 WAF 兼容 UA 的响应，确认 endpoint 是否被 Cloudflare 拦截 |
-
-The script uses WAF-compatible request headers, auto-splits batches on HTTP 413, and logs failed objects for retry.
-
-> **写自定义客户端时一定要带 User-Agent**：Cloudflare 部署的 endpoint 会把 Python urllib / Go net/http / Node fetch 的默认 UA 直接 1010 拦截（与 payload 大小无关）。任何绕过 `batch-ingest.py` 直接 `urllib.request` / `requests` / `fetch` 的脚本，都需要显式 `User-Agent: transcendence-memory-batch/0.2`（或任意非默认值）。详见 `references/troubleshooting.md` → "403 Forbidden（Cloudflare / WAF 拦截）"。
-
-### Command: `jobs`
-
-List background knowledge-graph build jobs from the local ledger. `/documents/text` / `/documents/upload` are async (server v0.15.0+); this reads `~/.transcendence-memory/pending-jobs.jsonl` and re-checks `/jobs/{id}` per entry.
-
-```bash
-python3 "<skill-path>/scripts/job-ledger.py" list
-```
-
-Shows in-progress / failed (with reason — retryable) / recently-done. You rarely need this: successes are silent, failures are surfaced by the SessionStart hook.
-
-## Quick Reference (for configured users)
-
-### Text Memories (lightweight path)
-
-```bash
-# Search memories
-curl -sS -X POST "${ENDPOINT}/search" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"container":"${CONTAINER}","query":"what you want to search for","topk":5}'
-
-# Store a memory
-curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"container":"${CONTAINER}","objects":[{"id":"mem-001","text":"content to store","tags":["tag1"]}]}'
-
-# Rebuild the index after storing a new memory.
-# Server v0.5.10+ enqueues this into a persistent queue and returns immediately
-# with a job_id (the legacy `pid` field). The single background worker drains
-# jobs at a stable, host-friendly pace; duplicate /embed calls for the same
-# container coalesce into one pending job.
-curl -sS -X POST "${ENDPOINT}/embed" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"container":"${CONTAINER}"}'
-
-# Update a memory
-curl -sS -X PUT "${ENDPOINT}/containers/${CONTAINER}/memories/mem-001" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"text":"updated content","tags":["new-tag"]}'
-
-# Delete a memory
-curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}/memories/mem-001" \
-  -H "X-API-KEY: ${API_KEY}"
-```
-
-> After updating or deleting a memory, run `/embed` to refresh the index.
-
-### Multimodal RAG (RAG-Anything pipeline)
-
-```bash
-# Ingest raw text into the knowledge graph. Async (server v0.15.0+): enqueues
-# and returns a job id at once — do not poll or wait. Record it afterwards with
-# `python3 <skill-path>/scripts/job-ledger.py add` (see the `jobs` command).
-curl -sS -X POST "${ENDPOINT}/documents/text" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -H "User-Agent: transcendence-memory-skill/0.4" \
-  -d '{"container":"${CONTAINER}","text":"long text to ingest...","description":"optional description"}'
-
-# Upload a file (PDF, image, or Markdown) — async, same job-id semantics as
-# /documents/text. See the `upload` command above for the ledger-recording form.
-curl -sS -X POST "${ENDPOINT}/documents/upload" \
-  -H "X-API-KEY: ${API_KEY}" \
-  -H "User-Agent: transcendence-memory-skill/0.4" \
-  -F "file=@/path/to/document.pdf" \
-  -F "container=${CONTAINER}"
-
-# Multimodal RAG query that returns an LLM-generated answer
-curl -sS -X POST "${ENDPOINT}/query" \
-  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
-  -d '{"query":"your question","container":"${CONTAINER}","mode":"hybrid","top_k":60}'
-```
-
-### Container Management
-
-```bash
-# List all containers
-curl -sS "${ENDPOINT}/containers" -H "X-API-KEY: ${API_KEY}"
-
-# Fuzzy filter by name (case-insensitive substring; mode also supports prefix / glob)
-curl -sS "${ENDPOINT}/containers?pattern=my-project" -H "X-API-KEY: ${API_KEY}"
-
-# Delete a container
-curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}" \
-  -H "X-API-KEY: ${API_KEY}"
-
-# Health check
-curl -sS "${ENDPOINT}/health"
-```
-
-Variables are read from the local config file `~/.transcendence-memory/config.toml`.
+## Gotchas — 最常踩的坑（写新代码前先扫一遍）
+
+| 症状 | 真因 | 修复 |
+|---|---|---|
+| `Bash({command: "tm ..."})` 报 `command not found` | `/tm` 是 slash command，**不是** shell binary | 用 `SlashCommand({command: "/tm ..."})`，或本文 `## AI Behavior — /tm is a slash command` 的 curl fallback |
+| `/documents/text` 或 `/upload` 后立即 `/query` 返空 | KG 构建异步 (server v0.15.0+)；HTTP 200 ≠ 完成 | **不要 polling**；写 ledger 后结束本轮，下个 session 再 query。详 `## AI Behavior — async ingestion silent-mode` |
+| `/tm remember` 写入后 `/query` 找不到 | `/ingest-memory/objects` 只写 LanceDB；`/query` 只看 KG | 需要双轨召回时 **dual-write**，详 `references/best-practices.md §1.2` |
+| `/search` 的 `results[]` 找不到入库时给的 `id` | 服务端不回流 client `id`；引用 key 是 `taskId + chunkId` | 按 `taskId` / `chunkId` / 文本前缀匹配；详 `references/commands.md` `search` §Response schema |
+| 自写 Python / Node 客户端调 endpoint 全部 403 | Cloudflare 默认拦 `python-urllib` / `node-fetch` / `Go net/http` UA | 显式 `User-Agent: transcendence-memory-skill/0.4`（任何非默认值都行） |
+| `update` / `delete` 之后 `/search` 看不到改动 | LanceDB index 没 rebuild | `/tm embed` 刷新（异步入队，duplicate calls 自动 coalesce） |
+| `/jobs/{pid}` 取不到 `.status` 字段 | 顶层没有 `status`；字段是 `running` / `exit_code` | 直接读 `running` / `exit_code`；或用 `/tm jobs` 走本地 ledger |
+| 明文 `sk-...` / `ghp_...` / `xoxb-...` 进了 memory | hooks 已自动 redact，但 batch / 自定义脚本绕过 | 调 `redact_secrets()`（`hooks/common.sh`）或 `batch-ingest.py --redact` |
+| `/tm upgrade` 报 `fatal: Not possible to fast-forward` | 本地有 cherry-pick shadow 或 divergence | `git tag backup/pre-upgrade-$(date +%Y%m%d) HEAD && git reset --hard origin/main`（完全可回退） |
+| recall / search 查不到老知识但记得写过 | 标题用了 ASCII id 不是模糊自然语言 | 按本文 `## Behavior Conventions §3` 的 Title + trigger-words 模板写；老记忆 retrofit 用索引卡补一层（`references/best-practices.<lang>.md §8`） |
+
+> **黄金法则**：HTTP 200 ≠ 业务完成。所有写路径（`/embed` / `/documents/*` / `/upload`）都是 fire-and-forget；只有 `/search` 同步。
 
 ## First-Time Setup
 
@@ -511,6 +216,7 @@ Or run `/tm connect --manual` and enter the values step by step.
 | Topic | File | When to load |
 |---|---|---|
 | Full HTTP API (request / response / error schemas) | [`references/api-reference.md`](./references/api-reference.md) | When you need exact field types |
+| **Per-command curl / options matrix** | [`references/commands.md`](./references/commands.md) | When invoking any `/tm <command>` — full HTTP body, options, response schema |
 | Architecture (dual-path model, container isolation, multi-embedding routing) | [`references/ARCHITECTURE.md`](./references/ARCHITECTURE.md) | When understanding how it works internally |
 | Troubleshooting (connect / 401 / 403 / empty search / empty query / WAF 403) | [`references/troubleshooting.md`](./references/troubleshooting.md) | When something doesn't work |
 | Operations (bulk ingest, persistent queue, automatic memory, platform support, multi-embedding ops) | [`references/OPERATIONS.md`](./references/OPERATIONS.md) | When operating at scale |
@@ -518,79 +224,7 @@ Or run `/tm connect --manual` and enter the values step by step.
 
 Auth methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`.
 
-### Common quick checks
-
-- **Cannot connect** → `/tm status` or `curl -sS "${ENDPOINT}/health"`
-- **401 / 403** → verify API key
-- **`/search` empty** → run `/tm embed` first to rebuild the index
-- **`/query` empty** → only `/documents/text` / `/documents/upload` populate the KG; if you only used `/tm remember`, dual-write (see best-practices §1.2)
-- **Updates / deletes not visible** → `/tm embed` to refresh
-- **Cannot find my `id` in search results** → client `id` is not echoed in `results[].id`; match by `taskId` + `chunkId` or text content
-- **`/jobs/{pid}` `.status` returns nothing** → there is no top-level `status` field; use `running` / `exit_code` instead
-
-Full troubleshooting matrix lives in [`references/troubleshooting.md`](./references/troubleshooting.md). Bulk ingest / persistent queue / `/jobs/{id}` polling / automatic memory / platform support details all live in [`references/OPERATIONS.md`](./references/OPERATIONS.md).
-
-### Command: `upgrade`
-
-Pull the latest skill from upstream. Auto-detects install location (Claude Code plugin cache / `~/.claude/skills/` / Cursor / direct git clone) and `git pull`s it. If the skill was installed by `npx skills add` (non-git tarball), prints the re-install command instead.
-
-```bash
-ROOT=""
-for cand in \
-  "${CLAUDE_PLUGIN_ROOT:-}" \
-  "$HOME/.claude/plugins/cache"/*/transcendence-memory \
-  "$HOME/.claude/plugins/cache"/transcendence-memory*/transcendence-memory \
-  "$HOME/.claude/skills/transcendence-memory" \
-  "$HOME/.cursor/skills/transcendence-memory"; do
-  [ -n "$cand" ] && [ -d "$cand/.git" ] && { ROOT="$cand"; break; }
-done
-
-if [ -n "$ROOT" ]; then
-  cd "$ROOT" && git fetch origin && git pull --ff-only origin main
-  echo "Upgraded to $(git rev-parse --short HEAD) at $ROOT"
-  echo "→ Restart your AI CLI (Claude Code / Cursor / etc.) to reload SKILL.md."
-else
-  echo "Skill not installed via git clone. Re-install one of:"
-  echo "  • Claude Code plugin:  /plugin update transcendence-memory"
-  echo "  • npx skills:          npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory --force"
-fi
-```
-
-> 升级会同步刷新 `SKILL.md` / `references/` / `scripts/batch-ingest.py` / 仓库自带的全部 plugin hooks（SessionStart + UserPromptSubmit + PostToolUse + Stop）。升级后重启 AI CLI 即可生效。
-
-### Command: `auto`
-
-Enable, disable, or check automatic memory management.
-
-**Enable** — creates a marker file so hooks auto-store commit summaries:
-```bash
-mkdir -p ~/.transcendence-memory
-touch ~/.transcendence-memory/auto-memory.enabled
-echo "Automatic memory enabled. Git commit summaries will be stored automatically."
-```
-
-**Disable** — removes the marker file:
-```bash
-rm -f ~/.transcendence-memory/auto-memory.enabled
-echo "Automatic memory disabled."
-```
-
-**Status** — check current state:
-```bash
-if [ -f ~/.transcendence-memory/auto-memory.enabled ]; then
-  echo "Automatic memory: ENABLED"
-else
-  echo "Automatic memory: DISABLED"
-fi
-if [ -f ~/.transcendence-memory/config.toml ]; then
-  ENDPOINT=$(grep '^endpoint' ~/.transcendence-memory/config.toml | sed 's/.*= *"//' | sed 's/".*//')
-  CONTAINER=$(grep '^container' ~/.transcendence-memory/config.toml | sed 's/.*= *"//' | sed 's/".*//')
-  echo "Endpoint: ${ENDPOINT}"
-  echo "Container: ${CONTAINER}"
-else
-  echo "Not connected. Run /tm connect first."
-fi
-```
+> **Cannot connect / 401 / 403 / 空响应** → 先看本文 `## Gotchas`；展开的失败矩阵在 [`references/troubleshooting.md`](./references/troubleshooting.md)；大批量 ingest / persistent queue / `/jobs/{id}` polling / automatic memory / 平台支持在 [`references/OPERATIONS.md`](./references/OPERATIONS.md)。
 
 ## Files in This Skill
 
