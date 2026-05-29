@@ -182,6 +182,23 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `auto status` | Show auto-memory configuration | `/tm auto status` |
 | `upgrade` | Pull latest skill scripts from the upstream repo | `/tm upgrade` |
 
+## Gotchas — 最常踩的坑（写新代码前先扫一遍）
+
+| 症状 | 真因 | 修复 |
+|---|---|---|
+| `Bash({command: "tm ..."})` 报 `command not found` | `/tm` 是 slash command，**不是** shell binary | 用 `SlashCommand({command: "/tm ..."})`，或本文 `## AI Behavior — /tm is a slash command` 的 curl fallback |
+| `/documents/text` 或 `/upload` 后立即 `/query` 返空 | KG 构建异步 (server v0.15.0+)；HTTP 200 ≠ 完成 | **不要 polling**；写 ledger 后结束本轮，下个 session 再 query。详 `## AI Behavior — async ingestion silent-mode` |
+| `/tm remember` 写入后 `/query` 找不到 | `/ingest-memory/objects` 只写 LanceDB；`/query` 只看 KG | 需要双轨召回时 **dual-write**，详 `references/best-practices.md §1.2` |
+| `/search` 的 `results[]` 找不到入库时给的 `id` | 服务端不回流 client `id`；引用 key 是 `taskId + chunkId` | 按 `taskId` / `chunkId` / 文本前缀匹配；详 `references/commands.md` `search` §Response schema |
+| 自写 Python / Node 客户端调 endpoint 全部 403 | Cloudflare 默认拦 `python-urllib` / `node-fetch` / `Go net/http` UA | 显式 `User-Agent: transcendence-memory-skill/0.4`（任何非默认值都行） |
+| `update` / `delete` 之后 `/search` 看不到改动 | LanceDB index 没 rebuild | `/tm embed` 刷新（异步入队，duplicate calls 自动 coalesce） |
+| `/jobs/{pid}` 取不到 `.status` 字段 | 顶层没有 `status`；字段是 `running` / `exit_code` | 直接读 `running` / `exit_code`；或用 `/tm jobs` 走本地 ledger |
+| 明文 `sk-...` / `ghp_...` / `xoxb-...` 进了 memory | hooks 已自动 redact，但 batch / 自定义脚本绕过 | 调 `redact_secrets()`（`hooks/common.sh`）或 `batch-ingest.py --redact` |
+| `/tm upgrade` 报 `fatal: Not possible to fast-forward` | 本地有 cherry-pick shadow 或 divergence | `git tag backup/pre-upgrade-$(date +%Y%m%d) HEAD && git reset --hard origin/main`（完全可回退） |
+| recall / search 查不到老知识但记得写过 | 标题用了 ASCII id 不是模糊自然语言 | 按本文 `## Behavior Conventions §3` 的 Title + trigger-words 模板写；老记忆 retrofit 用索引卡补一层（`references/best-practices.<lang>.md §8`） |
+
+> **黄金法则**：HTTP 200 ≠ 业务完成。所有写路径（`/embed` / `/documents/*` / `/upload`）都是 fire-and-forget；只有 `/search` 同步。
+
 ## First-Time Setup
 
 On first use, read `references/setup.md` to complete configuration.
@@ -207,17 +224,7 @@ Or run `/tm connect --manual` and enter the values step by step.
 
 Auth methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`.
 
-### Common quick checks
-
-- **Cannot connect** → `/tm status` or `curl -sS "${ENDPOINT}/health"`
-- **401 / 403** → verify API key
-- **`/search` empty** → run `/tm embed` first to rebuild the index
-- **`/query` empty** → only `/documents/text` / `/documents/upload` populate the KG; if you only used `/tm remember`, dual-write (see best-practices §1.2)
-- **Updates / deletes not visible** → `/tm embed` to refresh
-- **Cannot find my `id` in search results** → client `id` is not echoed in `results[].id`; match by `taskId` + `chunkId` or text content
-- **`/jobs/{pid}` `.status` returns nothing** → there is no top-level `status` field; use `running` / `exit_code` instead
-
-Full troubleshooting matrix lives in [`references/troubleshooting.md`](./references/troubleshooting.md). Bulk ingest / persistent queue / `/jobs/{id}` polling / automatic memory / platform support details all live in [`references/OPERATIONS.md`](./references/OPERATIONS.md).
+> **Cannot connect / 401 / 403 / 空响应** → 先看本文 `## Gotchas`；展开的失败矩阵在 [`references/troubleshooting.md`](./references/troubleshooting.md)；大批量 ingest / persistent queue / `/jobs/{id}` polling / automatic memory / 平台支持在 [`references/OPERATIONS.md`](./references/OPERATIONS.md)。
 
 ## Files in This Skill
 
