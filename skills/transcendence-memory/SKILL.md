@@ -1,6 +1,6 @@
 ---
 name: transcendence-memory
-description: Use when connecting to a self-hosted memory backend, searching, storing, or managing memories, importing connection tokens, or troubleshooting retrieval issues. Use this skill whenever the user mentions memory search, RAG retrieval, embedding, memory storage, multimodal document upload, knowledge queries, or wants to connect to a memory service, even if they do not explicitly say "transcendence-memory".
+description: Use when the user mentions memory search, RAG retrieval, knowledge queries, embedding rebuild, document upload, connection tokens, or invokes "/tm" / "transcendence-memory" — including indirect recall like "what did we decide last time", "上次怎么处理的", "之前的方案". Covers searching, storing, multimodal RAG queries, and troubleshooting against a self-hosted memory backend.
 allowed-tools: Bash, Read, Write, Grep, Glob
 argument-hint: "[command] [args...]"
 ---
