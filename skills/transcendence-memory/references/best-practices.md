@@ -4,6 +4,40 @@
 
 Field-tested usage patterns and anti-patterns for transcendence-memory. When `SKILL.md` and `troubleshooting.md` do not give a clear answer, this document is the authoritative reference.
 
+## 目录 (Table of Contents)
+
+- [1. The Two-Path Model: when to use `/search` vs `/query`](#1-the-two-path-model-when-to-use-search-vs-query)
+  - [1.1 Decision tree](#11-decision-tree)
+  - [1.2 Dual-write pattern](#12-dual-write-pattern)
+- [2. Cross-project reuse: build a dedicated container per topic](#2-cross-project-reuse-build-a-dedicated-container-per-topic)
+  - [2.1 Anti-pattern — dump everything into the default container](#21-anti-pattern--dump-everything-into-the-default-container)
+  - [2.2 Recommended — one dedicated container per reusable topic](#22-recommended--one-dedicated-container-per-reusable-topic)
+  - [2.3 Cross-container retrieval](#23-cross-container-retrieval)
+  - [2.4 Dual-track embeddings + automatic union (v0.11.0+)](#24-dual-track-embeddings--automatic-union-v0110)
+  - [2.5 When to migrate](#25-when-to-migrate)
+- [3. Indexing and async tasks: expected timings](#3-indexing-and-async-tasks-expected-timings)
+  - [3.1 Do not synchronously embed a large container](#31-do-not-synchronously-embed-a-large-container)
+  - [3.2 `/documents/text` is async — do not block on the build](#32-documentstext-is-async--do-not-block-on-the-build)
+- [4. General checklist](#4-general-checklist)
+  - [4.1 Ingestion](#41-ingestion)
+  - [4.2 Retrieval](#42-retrieval)
+  - [4.3 Container hygiene](#43-container-hygiene)
+  - [4.4 Configuration](#44-configuration)
+  - [4.5 Hand-rolled `curl` retrieval defaults](#45-hand-rolled-curl-retrieval-defaults)
+- [5. Real-world post-mortem: recent issues caught in the field](#5-real-world-post-mortem-recent-issues-caught-in-the-field)
+- [6. Embedding/Reranker selection & dim decision tree (v0.7.0+)](#6-embeddingreranker-selection--dim-decision-tree-v070)
+  - [6.1 Add a profile vs reuse default](#61-add-a-profile-vs-reuse-default)
+  - [6.2 Picking dim](#62-picking-dim)
+  - [6.3 Dim lock-in rule (HARD)](#63-dim-lock-in-rule-hard)
+  - [6.4 Dual-track naming convention](#64-dual-track-naming-convention)
+  - [6.5 When to enable reranker](#65-when-to-enable-reranker)
+- [7. Structured Memory Writing Conventions](#7-structured-memory-writing-conventions)
+  - [7.1 Title with synonyms](#71-title-with-synonyms)
+  - [7.2 "When to recall me" line](#72-when-to-recall-me-line)
+  - [7.3 Bilingual redundant tags](#73-bilingual-redundant-tags)
+- [8. High-Density Index Cards](#8-high-density-index-cards)
+- [9. Credential Redaction Checklist](#9-credential-redaction-checklist)
+
 ---
 
 ## 1. The Two-Path Model: when to use `/search` vs `/query`
@@ -213,6 +247,44 @@ out — see `troubleshooting.md`.)
 
 - The default container in `~/.transcendence-memory/config.toml` is your "home" container; reach dedicated ones explicitly via `--match`, `containers[]`, or `container_pattern`
 - For multi-machine setups, share configuration via `/tm connect <token>` rather than copying endpoint / api_key by hand
+
+### 4.5 Hand-rolled `curl` retrieval defaults
+
+When you bypass `/tm` and hit `/search` / `/query` with raw `curl`, three defaults
+keep retrieval reliable (these mirror what the bundled helper does for you):
+
+- **Default to `union:false` to avoid an uninitialized sibling**. If the server
+  has `union_search_default: true` but the `<container>_openai` sibling has not
+  been embedded yet, an implicit union pulls the empty sibling in and flips the
+  whole response to `degraded: true` (see §2.4). For a deterministic single-track
+  baseline, pass `"union": false` explicitly:
+  ```bash
+  curl ... -d '{"container":"my-container","query":"X","union":false}'
+  ```
+- **Wrap inline JSON in a here-doc to defend against `zsh` glob expansion**. Under
+  `zsh`, an unquoted `{...}` / `[...]` payload triggers `zsh: no matches found`
+  before `curl` ever runs. A `here-doc` (or single quotes) keeps the braces
+  literal:
+  ```bash
+  curl -sS -X POST "${ENDPOINT}/search" \
+    -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+    --data @- <<'JSON'
+  {"container":"my-container","query":"react native ota","topk":5,"union":false}
+  JSON
+  ```
+- **Don't blindly `--noproxy` — try both routes**. Connection timeouts are NOT
+  proof the proxy is at fault. A self-hosted endpoint is usually fronted by
+  **Cloudflare**, and on a GFW-region host the local `HTTP(S)_PROXY` /
+  `ALL_PROXY=socks5://...` is often the **only reliable** route to the Cloudflare
+  edge (a direct connect there can hit a ~12s timeout), so blindly adding
+  `--noproxy` can sever your only working path. The bundled `tm-search.sh` already
+  does the right thing automatically: **honor the ambient `*_PROXY` first, fall
+  back to a direct connect only if the proxied attempt fails** (the inverse case —
+  proxy set but broken, direct OK). When hand-rolling `curl`, try both:
+  ```bash
+  curl -sS "${ENDPOINT}/health"                            # route 1: honor proxy (often the reliable path)
+  curl --noproxy '*' --connect-timeout 15 -sS "${ENDPOINT}/health"   # route 2: direct fallback
+  ```
 
 ---
 

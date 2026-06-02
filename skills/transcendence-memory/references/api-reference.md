@@ -4,6 +4,109 @@
 
 > **v0.7.0+ multi-embedding 提示**：所有 `/embed` / `/ingest-*` / `/search` / `/query` 端点都接受**可选**字段 `embedding_model: str | None`（per-request 强制指定 embedding profile，覆盖默认路由）和 `rerank: bool | None` / `reranker_model: str | None`（v0.8.0+ 控制重排）。**不指定时按 container 名自动路由**，与 v0.6.x 行为完全兼容。详见末尾「Multi-Model 端点（v0.7.0+）」段。
 
+## 目录 (Table of Contents)
+
+- [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d) — `/search` 与 `/query` 字段名差异、`text`↔`content`/`chunk`、`score`↔`vectorScore`/`rerankScore`、**如何取全文不截断**
+- [轻量路径（文本记忆 CRUD）](#轻量路径文本记忆-crud)
+  - [GET /health](#get-health)
+  - [POST /search](#post-search)
+  - [POST /embed](#post-embed)
+  - [POST /ingest-memory/objects](#post-ingest-memoryobjects)
+  - [GET /ingest-memory/contract](#get-ingest-memorycontract)
+  - [POST /ingest-structured](#post-ingest-structured)
+  - [PUT /containers/{container}/memories/{id}](#put-containerscontainermemoriesid)
+  - [DELETE /containers/{container}/memories/{id}](#delete-containerscontainermemoriesid)
+- [多模态路径（RAG-Anything pipeline）](#多模态路径rag-anything-pipeline)
+  - [POST /documents/text](#post-documentstext)
+  - [POST /documents/upload](#post-documentsupload)
+  - [POST /query](#post-query)
+- [管理端点](#管理端点)
+  - [GET /containers](#get-containers)
+  - [DELETE /containers/{name}](#delete-containersname)
+  - [GET /export-connection-token](#get-export-connection-token)
+  - [GET /jobs/{job_id}](#get-jobsjob_id)
+  - [GET /jobs](#get-jobs)
+  - [DELETE /jobs/{job_id}](#delete-jobsjob_id)
+  - [GET /admin/system-health](#get-adminsystem-health)
+- [Multi-Model 端点（v0.7.0+）](#multi-model-端点v070)
+- [读取配置的辅助方法](#读取配置的辅助方法)
+
+> 每条命令的最小 curl / 选项速查见 [`commands.md`](./commands.md)；排障见 [`troubleshooting.md`](./troubleshooting.md)。
+
+---
+
+## 响应字段别名对照表（坑 D）
+
+> [!IMPORTANT]
+> **症状**：解析检索结果时按 `hit['content']` / `result['vectorScore']` 取值拿到 `KeyError`/`None`，或正文被截断只回到中间一段。**根因**：`/search` 与 `/query` 是两条不同管线，字段名不同；rerank 开启后又可能多出分数字段；长文本被切成多 chunk 后单条命中只含其中一段。本表是字段名与取全文的唯一对照源。
+
+### 1. 两条管线，命中数组与字段名都不同
+
+| 维度 | `POST /search`（LanceDB 轻量路径） | `POST /query`（RAG-Anything + LLM） |
+|---|---|---|
+| 命中数组字段名 | **`results`**（不是 `hits`） | **`sources`**（不是 `results`/`hits`） |
+| 正文字段 | `results[].text` | `sources[].text` |
+| 分数字段 | `results[].score` | `sources[].score`（开 rerank 后语义变，见下） |
+| 主键线索 | `taskId` + `chunkId`（**无顶级 `id`**） | `chunk_id`（注意是 `chunk_id` 蛇形，非 `chunkId`） |
+| 是否含 LLM 综合答案 | 否（只回原文 chunk） | 是（顶级 `answer`） |
+
+> 实测：`/search` 每条命中**没有顶级 `id`**；`/ingest-memory/objects` 写入时给的 `id` **不会**回流到 `results[].id`。下游按 `taskId + chunkId` 或 `text` 内容自行匹配。
+
+### 2. 正文字段别名：`text` 是规范名，可能见到的别名
+
+| 你可能在代码/旧文档/上游库里看到的名字 | 实际在本服务的对应 | 说明 |
+|---|---|---|
+| **`text`** | ✅ 规范字段 | `/search` `results[].text`、`/query` `sources[].text` 都用它，**优先读 `text`** |
+| `content` | 等价别名 | LightRAG / 部分上游把 chunk 正文叫 `content`；本服务回 `text`。自写解析器建议 `hit.get("text") or hit.get("content")` 兜底 |
+| `chunk` / `chunk_text` / `snippet` | 等价别名 | 同上，均指"命中片段正文"。本服务规范名仍是 `text` |
+| `page_content` | 等价别名 | LangChain 风格命名，本服务不用，做兼容时按 `text` 映射 |
+
+> **取值兜底写法**（防上游/版本字段名漂移）：
+> ```python
+> body = hit.get("text") or hit.get("content") or hit.get("chunk") or ""
+> ```
+
+### 3. 分数字段别名：`score` 与 rerank 后可能出现的 `vectorScore` / `rerankScore`
+
+| 字段 | 何时出现 | 含义 / 区间 |
+|---|---|---|
+| **`score`** | 始终 | 命中的相关性分。`/search` = LanceDB 余弦距离派生分；`/query` 未开 rerank 时 = 向量召回分 |
+| `vectorScore` / `vector_score` | 开 reranker 后可能并列出现 | **重排前**的向量召回原始分，保留用于对比/调试 |
+| `rerankScore` / `rerank_score` | 开 reranker 后可能并列出现 | reranker（cross-encoder 或 pseudo-rerank）给出的**重排后**分，区间随 reranker 而异（如 0–1） |
+
+**判定与排序约定**：
+- 未开 rerank（默认）：只有 `score`，直接用它排序。
+- 开 rerank（`/query` 带 `rerank:true` 或 route 配了 reranker）：若响应同时给出 `score` + `rerankScore`，**以 `rerankScore` 为最终排序依据**；`vectorScore` 仅供观察召回质量。不同部署可能直接把 `score` 覆盖成 rerank 后分而不另给 `rerankScore` —— 取值兜底：
+  ```python
+  rank = hit.get("rerankScore") or hit.get("rerank_score") or hit.get("score") or 0.0
+  ```
+- 重要：reranker **只作用于 `/query`**。`/search` 是 LanceDB 直查（cosine + topk），**永远不会**出现 `rerankScore`；如果你在 `/search` 结果里找 rerank 分，那是路径选错了。详见 [per-request 控制 reranker](#per-request-控制-rerankerv080)。
+
+### 4. 如何取全文 / 避免被截断
+
+长文本在 ingest 时会被**切成多个 chunk**（`chunkId` 末尾 `#<idx>` 是切片序号），单条命中只含其中一段；`topk` 又限制返回条数。要拿到完整内容：
+
+1. **调大 `topk`**：默认 5 容易只回到中间几段。取全文时把 `topk` 调到能覆盖该来源所有 chunk 的量（如 30–60），再在客户端按 `taskId` 聚合：
+   ```bash
+   curl -sS -X POST "${ENDPOINT}/search" \
+     -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+     -d '{"container":"${CONTAINER}","query":"<关键词>","topk":50}'
+   ```
+2. **取 `text` 全字段，别只截前 N 字**：`results[].text` 即该 chunk 的**完整**正文，没有服务端长度截断；任何"只显示一段"的现象都是 **chunk 切分 + topk 限制**，不是字段被截。客户端务必读完整 `text`，不要 `text[:200]`。
+3. **同来源多 chunk 聚合**：同一条 ingest 的多个 chunk 共享同一 `taskId`，`chunkId` 仅末尾 `#<idx>` 不同。按 `taskId` 分组、按 `#<idx>` 升序拼接即得原文：
+   ```python
+   from collections import defaultdict
+   groups = defaultdict(list)
+   for h in resp["results"]:
+       groups[h["taskId"]].append(h)
+   for tid, chunks in groups.items():
+       chunks.sort(key=lambda c: int(c["chunkId"].rsplit("#", 1)[-1]) if "#" in c["chunkId"] else 0)
+       full = "\n".join(c["text"] for c in chunks)
+   ```
+4. **要"综合答案"而非"原文片段"** → 用 `/query`（返回顶级 `answer`），它对召回的 chunk 做 LLM 综合，不受单 chunk 截断影响；但 `/query` 仅见 `/documents/*` 入图的内容（见 [POST /query](#post-query)）。
+
+> 速查：哪条命令回哪种字段，见 [`commands.md` POST /search 响应 schema](./commands.md#post-search-响应-schema) 与 [`commands.md` /tm query](./commands.md#tm-query--post-query)。
+
 ---
 
 ## 轻量路径（文本记忆 CRUD）
@@ -114,7 +217,9 @@ curl -sS -X POST "${ENDPOINT}/search" \
 - 主容器名不以 `_openai` 结尾（避免镜像查镜像）
 - sibling `<container>_openai` 在 server 文件系统上已存在
 
-**注意**：HTTP 200 不代表成功，需检查 body；跨容器场景下检查 `per_container_status` 定位部分失败的容器，检查 `degraded` 判断结果完整性。
+**注意**：HTTP 200 不代表成功，需检查 body；跨容器场景下检查 `per_container_status` 定位部分失败的容器，检查 `degraded` 判断结果完整性。`per_container_status` 命中 `timeout`/`not_initialized` 或 `degraded:true` 多半是冷启动/未初始化 sibling，见 [`troubleshooting.md` 冷启动段](./troubleshooting.md#冷启动服务端索引未热起http-200-但-body-未就绪)。
+
+> **字段名与取全文**：`results` 数组、`text`/`score` 字段、以及它们与 `/query` 的 `sources`、rerank 后 `vectorScore`/`rerankScore` 的区别，统一见 [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d)。结果被切成多 chunk / 看似截断时如何取全文也在该段。
 
 ### POST /embed
 
@@ -328,6 +433,8 @@ curl -sS -X POST "${ENDPOINT}/query" \
   "sources": [{"chunk_id": "...", "score": 0.85, "text": "..."}]
 }
 ```
+
+> **字段名注意**：`/query` 的来源数组叫 **`sources`**（不是 `/search` 的 `results`），主键是蛇形 `chunk_id`（不是 `chunkId`）。开 reranker 后 `score` 语义变为重排后分，可能并列出现 `vectorScore`/`rerankScore` —— 字段别名与排序约定见 [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d)。
 
 ---
 

@@ -20,13 +20,21 @@ allowed-tools: Bash, Read, Write, Grep, Glob
 
 ## How to execute
 
-Read the canonical SKILL.md and follow its instructions verbatim:
+Read the canonical SKILL.md and follow its instructions verbatim. Its location depends on how the
+skill is installed — read the **sibling `transcendence-memory` skill directory next to this `tm`
+directory**:
 
-```
-Read the file: skills/transcendence-memory/SKILL.md
-```
+- **Plugin install** (`/plugin install`): both skill dirs live under
+  `<plugin-root>/skills/`, so the canonical file is `../transcendence-memory/SKILL.md`
+  relative to this one (plugin root = `~/.claude/plugins/cache/transcendence-memory/transcendence-memory/<version>/`).
+- **Bare skill install** (`npx skills add`, Cursor, or dropped under `~/.agents/skills/`): each
+  skill is its own top-level dir, so the canonical file is the sibling
+  `~/.agents/skills/transcendence-memory/SKILL.md` (i.e. `../transcendence-memory/SKILL.md`
+  relative to `~/.agents/skills/tm/`).
 
-(Resolve relative to this skill's parent directory: `<plugin-root>/skills/transcendence-memory/SKILL.md`. When installed via `/plugin install`, the plugin root is `~/.claude/plugins/cache/transcendence-memory/transcendence-memory/<version>/`.)
+In both layouts the canonical SKILL.md sits in a sibling `transcendence-memory/` directory — locate
+it by name (e.g. `Glob: **/skills/transcendence-memory/SKILL.md` or `~/.agents/skills/transcendence-memory/SKILL.md`)
+rather than hard-coding one absolute path.
 
 That file documents the complete command set:
 
