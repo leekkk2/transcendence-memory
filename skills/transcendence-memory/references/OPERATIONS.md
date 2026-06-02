@@ -1,5 +1,30 @@
 # 操作验证 / Operations
 
+## 目录 (Table of Contents)
+
+- [连接验证流程](#连接验证流程)
+- [批量入库预检](#批量入库预检)
+- [多模态验证流程](#多模态验证流程)
+- [CRUD 验证流程](#crud-验证流程)
+- [Rollout 完成标准](#rollout-完成标准)
+  - [基础（轻量路径）](#基础轻量路径)
+  - [多模态路径](#多模态路径)
+  - [CRUD](#crud)
+  - [批量入库预检](#批量入库预检-1)
+  - [通用规则](#通用规则)
+- [Multi-Embedding 运维操作（v0.7.0+ / v0.10.0+）](#multi-embedding-运维操作v070--v0100)
+  - [切换 container 默认 embedding profile](#切换-container-默认-embedding-profile)
+  - [container 内 in-place 换 dim（替换式 migration）](#container-内-in-place-换-dim替换式-migration)
+  - [双轨并运（新建镜像 container，源不动）](#双轨并运新建镜像-container源不动)
+  - [行级 embedding 归属查询（重要！避免误判位置）](#行级-embedding-归属查询重要避免误判位置)
+  - [监控 / 巡检](#监控--巡检)
+- [Reminder](#reminder)
+- [Automatic Memory (lifecycle hooks)](#automatic-memory-lifecycle-hooks)
+  - [Hooks](#hooks)
+  - [Enable / disable / status](#enable--disable--status)
+  - [What gets stored](#what-gets-stored)
+- [Platform Support](#platform-support)
+
 ## 连接验证流程
 
 按顺序执行，全部通过即可视为 rollout 完成：
@@ -153,6 +178,12 @@ curl -sS -X POST "${ENDPOINT}/embed" \
 
 ## Multi-Embedding 运维操作（v0.7.0+ / v0.10.0+）
 
+> ⚠️ **边界澄清（必读）**：本节及下文的 `docker exec <container> python3 /app/scripts/...`
+> 与容器内 `lancedb.connect('/data/...')` 直查，都是 **server 侧运维 / 审计动作**（迁移
+> embedding、巡检行级归属等），**不是检索 / 召回链路**。检索记忆的**唯一正道**是 HTTP
+> `/search`（翻原文）或 `/query`（LLM 综合），见 `SKILL.md` 「唯一正道」段与 `scripts/tm-search.sh`。
+> **日常查记忆一律走 HTTP，禁止 `docker exec` 进容器翻 LanceDB**（那需 server 宿主访问权，属 server 仓职责）。
+
 ### 切换 container 默认 embedding profile
 
 只改 server 端 `config/profiles.yaml` routes 段即可，**不需要重启容器**（cache key 含 route signature，profile 变化时下次请求自动刷新 LightRAG instance）：
@@ -200,6 +231,9 @@ docker exec <container> python3 /app/scripts/clone_container_reembed.py \
 后续写入：双轨需调用方**写两遍**保持同步（或等 server 端 `mirror_containers` feature 自动镜像）。读取：按业务选 container 名，server 自动路由对应 profile。
 
 ### 行级 embedding 归属查询（重要！避免误判位置）
+
+> ⚠️ 下面的容器内 `lancedb.connect(...)` 直查仅用于 **server 侧审计 / 排障**（核对某行向量的
+> embedding 归属），**不是检索记忆的方式**——查记忆走 HTTP `/search` / `/query`，不要 `docker exec` 翻表。
 
 LanceDB chunks 表 v0.7.0+ 起为每行 schema 增加了 **3 个顶级列**记录嵌入归属：
 

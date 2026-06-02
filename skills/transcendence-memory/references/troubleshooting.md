@@ -1,5 +1,47 @@
 # 排障 / Troubleshooting
 
+## 目录 (Table of Contents)
+
+- [快速诊断](#快速诊断)
+- [通用问题](#通用问题)
+  - [怎么查容器列表](#怎么查容器列表)
+  - [配置文件不存在](#配置文件不存在)
+  - [连接被拒绝 / 超时](#连接被拒绝--超时)
+  - [401 Unauthorized](#401-unauthorized)
+  - [403 Forbidden（Cloudflare / WAF 拦截 — `error code: 1010`）](#403-forbiddencloudflare--waf-拦截--error-code-1010)
+  - [Hook 报错 `xargs: unterminated quote`（auto-memory 后台静默失败）](#hook-报错-xargs-unterminated-quoteauto-memory-后台静默失败)
+  - [413 Request Entity Too Large](#413-request-entity-too-large)
+  - [422 Unprocessable Entity](#422-unprocessable-entity)
+  - [5xx 错误](#5xx-错误)
+- [轻量路径问题](#轻量路径问题)
+  - [search 返回 200 但 body 有错误](#search-返回-200-但-body-有错误)
+  - [冷启动：服务端索引未热起（HTTP 200 但 body 未就绪）](#冷启动服务端索引未热起http-200-但-body-未就绪)
+  - [`degraded:true` — union 把未初始化 sibling 拉进来拖累整体](#degradedtrue--union-把未初始化-sibling-拉进来拖累整体)
+  - [search 无结果](#search-无结果)
+  - [embed 任务失败 / 卡住（上游 embedding 限速）](#embed-任务失败--卡住上游-embedding-限速)
+  - [update/delete 后变更未生效](#updatedelete-后变更未生效)
+- [多模态路径问题](#多模态路径问题)
+  - [文档上传失败](#文档上传失败)
+  - [`/documents/text` / `/documents/upload` 返回 524 / 超时](#documentstext--documentsupload-返回-524--超时)
+  - [query 返回空答案](#query-返回空答案)
+  - [`/search` 有结果但 `/query` 返回"无信息"](#search-有结果但-query-返回无信息)
+  - [异步任务查询](#异步任务查询)
+  - [VLM 相关问题](#vlm-相关问题)
+- [批量入库问题](#批量入库问题)
+  - [批量导入推荐流程](#批量导入推荐流程)
+  - [入库后搜索不到](#入库后搜索不到)
+  - [脱敏不完整](#脱敏不完整)
+- [重置配置](#重置配置)
+- [Multi-Embedding / dim mismatch（v0.7.0+）](#multi-embedding--dim-mismatchv070)
+  - ["query dim X doesn't match the column vector dim Y" lance error](#query-dim-x-doesnt-match-the-column-vector-dim-y-lance-error)
+  - [`/admin/probe-embedding` 返回 `ok: false`](#adminprobe-embedding-返回-ok-false)
+  - [行级查询 `metadata.embedding_model` 永远拿不到](#行级查询-metadataembedding_model-永远拿不到)
+  - [Per-request `embedding_model` override 不生效](#per-request-embedding_model-override-不生效)
+  - [Reranker 配置了但永远不生效](#reranker-配置了但永远不生效)
+  - [客户端代码用 `enable_rerank` 字段没反应](#客户端代码用-enable_rerank-字段没反应)
+  - [Reranker upstream 返回 400 `model_price_error` / `model_not_found`](#reranker-upstream-返回-400-model_price_error--model_not_found)
+  - [`/query` 报 `AssertionError: Embedding dim mismatch, expected: X, but loaded: Y`](#query-报-assertionerror-embedding-dim-mismatch-expected-x-but-loaded-y)
+
 ## 快速诊断
 
 ```bash
@@ -40,12 +82,24 @@ curl -sS -o /dev/null -w "%{http_code}" "${ENDPOINT}/health"
 ```
 
 可能原因：
+- **连接超时既可能是代理劫持、也可能是直连被墙——两条路都要试**（高频，最易误判）：连接超时**不等于**「代理在捣乱」。本机若设了 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY=socks5://...`，存在两种相反情形：
+  - **代理坏 / 直连可用**：代理本身挂了，绕过它直连才通 → 该加 `--noproxy`。
+  - **代理是唯一活路（GFW 区高频）**：自建域名走 **Cloudflare**，本机在墙内**直连 Cloudflare edge 不稳**（实测 ~12s connect 超时、两个 edge IP 都失败），而经本机 localhost 代理反而 ~1–1.4s 稳定可达 → 此时**盲目 `--noproxy` 会把唯一能用的路掐断**，越改越坏。
+
+  `scripts/tm-search.sh` 已自动两路 fallback（**默认尊重环境代理**，失败再自动直连重试一次），日常无需手动判路。手搓 `curl` 自检时也两路都试：
+  ```bash
+  # 路 1：尊重环境代理（GFW 区 Cloudflare-fronted endpoint 常是可靠路径）
+  curl -sS -o /dev/null -w "%{http_code}" "${ENDPOINT}/health"
+  # 路 2：直连（代理坏 / 直连可用的反向场景；给更宽的 connect-timeout）
+  curl -sS --noproxy '*' --connect-timeout 15 -o /dev/null -w "%{http_code}" "${ENDPOINT}/health"
+  ```
+  判定：哪条通用哪条；两条都超时再往下查 endpoint / server / 网络。安全说明：经本机 localhost 代理走 HTTPS 是 CONNECT 隧道，TLS 终结在 Cloudflare，代理只见 `host:443`，看不到 `X-API-KEY` / body，无凭证泄漏。
 - endpoint 地址错误
 - server 未启动
 - 防火墙 / 网络不通
 - 反向代理配置问题
 
-→ 联系后端管理员确认服务状态。
+→ 两路都试过仍不通，联系后端管理员确认服务状态。
 
 ### 401 Unauthorized
 
@@ -236,6 +290,51 @@ echo "exit=$?"  # 期望 0
 这不算成功。可能原因：
 - container 未初始化 → 先执行 `/embed`
 - server 内部错误 → 检查 server 日志
+- **冷启动未就绪**（见下条）→ 不是错误，重发即可
+
+### 冷启动：服务端索引未热起（HTTP 200 但 body 未就绪）
+
+**现象**：`/search` 返回 **HTTP 200**，但 body 里：
+- `per_container_status` 出现 `timeout` 或 `not_initialized`
+- `initialized: false`
+- `degraded: true`
+
+**根因**：**不是连接失败、不是 bug**。服务端 subprocess 冷加载（py + lancedb + lightrag import + table load + embed call）实测 5–10s，首个请求常在索引热起前先返回，命中为空或部分超时。
+
+**首选 — 用 `scripts/tm-search.sh`**：它已**惰性吸收**冷启动（首跑触发热加载、内部等就绪后再返回），日常检索直接用它即可，无需手动重试：
+```bash
+bash <skill-path>/scripts/tm-search.sh "<query>"
+```
+
+**手动 curl 排查时才需要短间隔重发几次**（等服务端热起）：
+```bash
+for i in 1 2 3; do
+  curl -sS --noproxy '*' -X POST "${ENDPOINT}/search" \
+    -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+    -d "{\"container\":\"${CONTAINER}\",\"query\":\"<q>\",\"topk\":5}"
+  sleep 3
+done
+```
+
+> ⚠ **不要依赖 `curl --retry`**：`--retry` 只对连接错误 / 指定的 5xx 重试，对 **HTTP 200 + 坏 body**（冷启动正是这种）**完全不会重试**。必须解析 body 看 `per_container_status` / `degraded` / `runtime_ready` 后再自行重发。
+
+### `degraded:true` — union 把未初始化 sibling 拉进来拖累整体
+
+**现象**：单容器查询本应只查一个容器，结果 `degraded:true`，`per_container_status` 里冒出一个 `<container>_openai`（或其它 sibling）= `not_initialized` / `timeout`。
+
+**根因**：server 端 `union_search_default:true`（或请求带 `union:true`）会自动把 sibling `_openai` 镜像并进来一起查；当该 sibling **尚未初始化 / 未 embed** 时，它直接令整体 `degraded:true` 并污染 `per_container_status`，但主容器结果其实是好的。
+
+**规避（任选）**：
+- **首选 `scripts/tm-search.sh`** —— 默认带 `union:false`，不会把未就绪 sibling 拉进来。
+- 手动 curl 强制单容器（即使 server 默认开 union）：
+  ```bash
+  curl -sS --noproxy '*' -X POST "${ENDPOINT}/search" \
+    -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+    -d "{\"container\":\"${CONTAINER}\",\"query\":\"<q>\",\"topk\":5,\"union\":false}"
+  ```
+- 确实要双轨召回 → 先给 sibling 跑一次 `/embed` 让它初始化，之后 union 才不会 degraded。
+
+> 判定要点：`degraded:true` 时先看 `per_container_status` 是哪个容器坏的——如果坏的是 `*_openai` sibling 而主容器 `ok`，主结果可信，按上面 `union:false` 止血即可，不必当成数据丢失。
 
 ### search 无结果
 

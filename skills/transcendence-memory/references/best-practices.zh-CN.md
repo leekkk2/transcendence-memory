@@ -4,6 +4,40 @@
 
 本文档记录 transcendence-memory 在真实项目中沉淀出的使用模式与避坑指引。当 SKILL.md 与 troubleshooting.md 不能给出明确答案时,这里是判断基准。
 
+## 目录 (Table of Contents)
+
+- [1. 双路径模型：何时用 `/search`,何时用 `/query`](#1-双路径模型何时用-search何时用-query)
+  - [1.1 决策树](#11-决策树)
+  - [1.2 跨路径双写](#12-跨路径双写)
+- [2. 跨项目复用经验：建立专属容器](#2-跨项目复用经验建立专属容器)
+  - [2.1 反模式 — 把所有东西塞默认容器](#21-反模式--把所有东西塞默认容器)
+  - [2.2 推荐模式 — 按主题建专属容器](#22-推荐模式--按主题建专属容器)
+  - [2.3 跨容器召回](#23-跨容器召回)
+  - [2.4 双轨 embedding 与默认 union 召回（v0.11.0+）](#24-双轨-embedding-与默认-union-召回v0110)
+  - [2.5 何时迁移](#25-何时迁移)
+- [3. 索引与异步任务：预期时长](#3-索引与异步任务预期时长)
+  - [3.1 别同步 embed 大容器](#31-别同步-embed-大容器)
+  - [3.2 `/documents/text` 是异步的 —— 别阻塞等建图](#32-documentstext-是异步的--别阻塞等建图)
+- [4. 通用建议清单](#4-通用建议清单)
+  - [4.1 入库](#41-入库)
+  - [4.2 检索](#42-检索)
+  - [4.3 容器管理](#43-容器管理)
+  - [4.4 配置](#44-配置)
+  - [4.5 手搓 `curl` 检索的默认约定](#45-手搓-curl-检索的默认约定)
+- [5. 实战回顾：近期遇到的具体问题](#5-实战回顾近期遇到的具体问题)
+- [6. Embedding/Reranker 选型与 dim 决策树（v0.7.0+）](#6-embeddingreranker-选型与-dim-决策树v070)
+  - [6.1 何时新建 profile vs 何时复用 default](#61-何时新建-profile-vs-何时复用-default)
+  - [6.2 选 dim 的决策树](#62-选-dim-的决策树)
+  - [6.3 维度锁死铁律](#63-维度锁死铁律)
+  - [6.4 双轨并运的命名约定](#64-双轨并运的命名约定)
+  - [6.5 Reranker 何时开](#65-reranker-何时开)
+- [7. 结构化记忆编写工艺](#7-结构化记忆编写工艺)
+  - [7.1 标题同义词头部](#71-标题同义词头部)
+  - [7.2 「何时召回我」章节](#72-何时召回我章节)
+  - [7.3 双语冗余 Tags](#73-双语冗余-tags)
+- [8. 高密度索引卡设计](#8-高密度索引卡设计)
+- [9. 凭证脱敏 Checklist](#9-凭证脱敏-checklist)
+
 ---
 
 ## 1. 双路径模型：何时用 `/search`,何时用 `/query`
@@ -196,6 +230,39 @@ server v0.15.0+ 入队即返回 job 标识（`pid`）,知识图谱由后台 work
 
 - `~/.transcendence-memory/config.toml` 的默认 container 是日常工作的"主容器",其它专属容器通过 `--match` / `containers[]` / `container_pattern` 显式访问
 - 多机器协作时统一 `/tm connect <token>` 导入,不要手抄 endpoint/api_key
+
+### 4.5 手搓 `curl` 检索的默认约定
+
+当你绕过 `/tm`、直接用裸 `curl` 打 `/search` / `/query` 时,下面三条默认约定
+能让检索更稳(这也是内置 helper 替你做的事):
+
+- **默认 `union:false`,规避未初始化 sibling**。如果 server 开了
+  `union_search_default: true`,但 `<container>_openai` 这个 sibling 还没 embed,
+  隐式 union 会把空 sibling 拉进来,直接令整个响应 `degraded: true`(见 §2.4)。
+  想要确定性的单轨 baseline,显式传 `"union": false`:
+  ```bash
+  curl ... -d '{"container":"my-container","query":"X","union":false}'
+  ```
+- **内联 JSON 用 here-doc 包裹,防 `zsh` glob 误展开**。在 `zsh` 下,未加引号的
+  `{...}` / `[...]` payload 会在 `curl` 跑起来之前就触发 `zsh: no matches found`。
+  用 `here-doc`(或单引号)能让花括号保持字面量:
+  ```bash
+  curl -sS -X POST "${ENDPOINT}/search" \
+    -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+    --data @- <<'JSON'
+  {"container":"my-container","query":"react native ota","topk":5,"union":false}
+  JSON
+  ```
+- **勿盲目 `--noproxy`,两条路都试**。连接超时**不等于**代理在捣乱。自建 endpoint
+  通常走 **Cloudflare**,GFW 区本机的 `HTTP(S)_PROXY` / `ALL_PROXY=socks5://...`
+  往往是到 Cloudflare edge 的**唯一可靠出口**(在墙内直连 edge 实测 ~12s connect
+  超时),此时盲目加 `--noproxy` 反而会把唯一能用的路掐断。内置 `tm-search.sh` 已
+  自动做对:**默认尊重环境代理,失败再自动直连 fallback**(覆盖「代理坏 / 直连可用」
+  的反向场景)。手搓 `curl` 时两路都试:
+  ```bash
+  curl -sS "${ENDPOINT}/health"                            # 路 1:尊重环境代理(常是可靠路径)
+  curl --noproxy '*' --connect-timeout 15 -sS "${ENDPOINT}/health"   # 路 2:直连 fallback
+  ```
 
 ---
 

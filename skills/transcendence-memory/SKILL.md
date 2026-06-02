@@ -56,6 +56,7 @@ git clone https://github.com/leekkk2/transcendence-memory.git \
 
 ## Principles
 
+- **Retrieval has exactly one correct path — HTTP only (STRICT).** Recalling / searching memory goes **only** through this skill's backend over HTTP: the configured `endpoint`'s `/search` or `/query` (preferred wrapper: `bash scripts/tm-search.sh search <query>`). **Never `docker exec` into any local database to look for memories** — not `supabase_db_*`, not a `claude-mem` postgres, not `memory-app` / `memory-copilot`, not any app's local `supabase` / `psql`. Those are *other projects' private stores* with no relationship to this skill's backend; querying them is both wrong (no data there) and a cross-project contamination violation. If `scripts/tm-search.sh` is unavailable, fall back to inline `curl` against the configured `endpoint` (see the curl escape hatch in the slash-command STRICT block below) — still pure HTTP, never a container shell.
 - **Keep builtin memory**: server-side memory augments the agent's builtin memory instead of replacing it
 - **Zero dependency**: no extra package installation is required; the agent can do everything with native tools such as curl, file I/O, and the Python standard library
 - **Progressive loading**: read `references/setup.md` during first-time setup, then this file is enough for day-to-day use
@@ -138,15 +139,22 @@ $ tm remember "..."        # ❌ command not found
 $ /tm search "..."         # ❌ no such file or directory
 ```
 
-The AI MUST use one of these two paths only:
+There is also **no `tm` / `tm-codex` shell binary** — don't try to run one. The AI MUST use one of these paths only (all pure HTTP — never a shell into a DB):
 
-1. **Preferred — `SlashCommand` tool** (when running inside Claude Code):
+1. **Preferred — bundled wrapper script** (works on any agent — Claude / Gemini / Codex — in or out of Claude Code):
+   ```bash
+   bash scripts/tm-search.sh search <query>     # semantic recall over the configured container
+   bash scripts/tm-search.sh query <q>          # multimodal RAG query
+   bash scripts/tm-search.sh status             # one-line health probe
+   ```
+   It reads `~/.transcendence-memory/config.toml`, builds the JSON body zsh-glob-safely (jq + heredoc, never bare braces), adds a WAF-compatible User-Agent, honors `*_PROXY` with auto-fallback to direct, and lazily absorbs a cold-start backend on first call — so agents stop guessing at a nonexistent `tm`/`tm-codex` binary. (No separate warm-up SOP — warm-up is handled inside the script.)
+
+2. **`SlashCommand` tool** (when running inside Claude Code):
    ```
    SlashCommand({ command: "/tm search <query>" })
    ```
 
-2. **Fallback — direct HTTP via Bash + curl** (when `SlashCommand` is unavailable
-   or the AI is outside Claude Code):
+3. **Escape hatch — inline curl** (only when the wrapper is unavailable):
    ```bash
    ENDPOINT="$(grep '^endpoint' ~/.transcendence-memory/config.toml | cut -d'"' -f2)"
    API_KEY="$(grep '^api_key' ~/.transcendence-memory/config.toml | cut -d'"' -f2)"
@@ -157,7 +165,7 @@ The AI MUST use one of these two paths only:
    ```
 
 If the AI catches itself about to invoke `Bash({command: "tm ..."})` or
-`Bash({command: "/tm ..."})`, STOP and switch to one of the two paths above.
+`Bash({command: "/tm ..."})`, STOP and switch to one of the paths above.
 The same applies to the long-form alias `/transcendence-memory <command>`.
 
 > The `Example` column in the command table below shows the slash-command form.
@@ -167,7 +175,7 @@ The same applies to the long-form alias `/transcendence-memory <command>`.
 
 Any call that returns an integer `pid` / `job_id` from a server v0.15.0+ KG-write endpoint (`/tm upload`, raw `POST /documents/text`, `POST /documents/upload`) is **fire-and-forget**. HTTP already returned — the task is handed off. The AI **MUST**:
 
-1. **Never poll `/jobs/{id}` to wait for completion.** No `until` loops, no sleep-loops, no blocking waits.
+1. **Never poll `/jobs/{id}` to wait for completion — this rule scopes ONLY to the KG-build jobs above** (`/documents/*`, `/tm upload`). No `until` loops, no sleep-loops, no blocking waits for those. (`/embed` async jobs are an index rebuild, **not** a KG-build job, and MAY be polled via `GET /jobs/{id}` — the `until ... sleep` polling templates in `references/*` are scoped to `/embed`, not to these KG-build jobs.)
 2. **Pipe the server response to the ledger and end the turn**:
    ```bash
    echo '<server-response-json>' | python3 <skill-path>/scripts/job-ledger.py add
@@ -218,8 +226,11 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | 明文 `sk-...` / `ghp_...` / `xoxb-...` 进了 memory | hooks 已自动 redact，但 batch / 自定义脚本绕过 | 调 `redact_secrets()`（`hooks/common.sh`）或 `batch-ingest.py --redact` |
 | `/tm upgrade` 报 `fatal: Not possible to fast-forward` | 本地有 cherry-pick shadow 或 divergence | `git tag backup/pre-upgrade-$(date +%Y%m%d) HEAD && git reset --hard origin/main`（完全可回退） |
 | recall / search 查不到老知识但记得写过 | 标题用了 ASCII id 不是模糊自然语言 | 按本文 `## Behavior Conventions §3` 的 Title + trigger-words 模板写；老记忆 retrofit 用索引卡补一层（`references/best-practices.<lang>.md §8`） |
+| `/health` / `/search` 回 `200` 但服务其实没就绪 | 冷启动（切换/重启后）body 携带 `degraded:true` / `per_container_status: timeout\|not_initialized` / `initialized:false`，**200 ≠ 成功** | **解析 body**，命中冷启动信号就把同一查询短间隔重发几次直到 ok（`tm-search.sh` 已自动做）。`curl --retry` 抓不到（200 在它眼里就是成功） |
+| 单容器查询无故 `degraded:true` | 默认 `union:false`；但一旦走 union，存在却未 embed 的 sibling（如 `*_openai`）会把整次检索拖成 degraded | 主容器结果其实正常——本次显式传 `"union":false` 跳过 sibling，或先给 sibling 跑一次 `/embed` 再 union |
+| 有全局代理时直连超时 / 或反过来代理不通 | endpoint 常被 Cloudflare fronting：某些机器上 env 代理才是快且可靠的路径（GFW 区直连可能 ~12s 超时），另一些机器反之 | 别预设"代理 = 问题"。`tm-search.sh` 默认走 `*_PROXY`、连接失败再自动回退直连；`TM_NO_PROXY=1` 强制直连 |
 
-> **黄金法则**：HTTP 200 ≠ 业务完成。所有写路径（`/embed` / `/documents/*` / `/upload`）都是 fire-and-forget；只有 `/search` 同步。
+> **黄金法则**：HTTP 200 ≠ 业务完成。所有写路径（`/embed` / `/documents/*` / `/upload`）都是 fire-and-forget；只有 `/search` 同步。冷启动时连读路径的 200 都可能携带 degraded body——务必解析。
 
 ## First-Time Setup
 
@@ -231,18 +242,22 @@ The core flow has only two steps:
 
 Or run `/tm connect --manual` and enter the values step by step.
 
+To verify connectivity afterwards, prefer `bash scripts/tm-search.sh status` (a zero-dependency health probe that runs on any agent — Claude / Gemini / Codex — and parses the body for cold-start signals, so a degraded `200` is not mistaken for success). There is no `tm` / `tm-codex` shell binary to call.
+
 > After configuration is complete, `references/setup.md` no longer needs to be loaded into context.
 
 ## Reference Documents
 
 | Topic | File | When to load |
 |---|---|---|
-| Full HTTP API (request / response / error schemas) | [`references/api-reference.md`](./references/api-reference.md) | When you need exact field types |
+| First-time setup (token decode, config.toml, verify) | [`references/setup.md`](./references/setup.md) | First use only |
+| Full HTTP API (request / response / error schemas, field-alias table) | [`references/api-reference.md`](./references/api-reference.md) | When you need exact field types |
 | **Per-command curl / options matrix** | [`references/commands.md`](./references/commands.md) | When invoking any `/tm <command>` — full HTTP body, options, response schema |
 | Architecture (dual-path model, container isolation, multi-embedding routing) | [`references/ARCHITECTURE.md`](./references/ARCHITECTURE.md) | When understanding how it works internally |
-| Troubleshooting (connect / 401 / 403 / empty search / empty query / WAF 403) | [`references/troubleshooting.md`](./references/troubleshooting.md) | When something doesn't work |
+| Troubleshooting (connect / 401 / 403 / empty search / empty query / cold-start / union degraded / WAF 403) | [`references/troubleshooting.md`](./references/troubleshooting.md) | When something doesn't work |
 | Operations (bulk ingest, persistent queue, automatic memory, platform support, multi-embedding ops) | [`references/OPERATIONS.md`](./references/OPERATIONS.md) | When operating at scale |
-| Best practices (two-path model, dedicated containers, dual-track embeddings) | [`references/best-practices.md`](./references/best-practices.md) | Before designing memory layout |
+| Best practices — English / 中文 (two-path model, dedicated containers, dual-track embeddings) | [`references/best-practices.md`](./references/best-practices.md) · [`references/best-practices.zh-CN.md`](./references/best-practices.zh-CN.md) | Before designing memory layout |
+| Retrofit playbook (back-filling fuzzy index cards onto legacy ASCII-id memories) | [`references/retrofit-playbook.md`](./references/retrofit-playbook.md) | When migrating old memories for recall |
 
 Auth methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`.
 
@@ -256,13 +271,20 @@ Auth methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`.
 | File | Purpose | When to load |
 |------|------|---------|
 | `references/templates/config.toml.template` | Config file template | During first-time setup |
-| `scripts/batch-ingest.py` | Bulk ingest script | For large memory imports |
+| `scripts/tm-search.sh` | Preferred retrieval wrapper: `search` / `query` / `status` over HTTP (config load, zsh-glob-safe JSON, proxy auto-fallback, lazy cold-start warm-up) | Primary path for recall + health probe |
+| `scripts/batch-ingest.py` | Bulk ingest script (built-in `--redact`) | For large memory imports |
 | `scripts/job-ledger.py` | Async job ledger: `add` / `sweep` / `list` for background KG build jobs | Used by `/tm jobs`, `/tm upload`, and the SessionStart hook |
-| `hooks/common.sh` | Shared bash library for all hooks (config loading, API calls, JSON escaping) | Auto-loaded by hooks |
-| `hooks/session-start` | SessionStart hook: health check + memory recall injection | Auto-registered |
-| `hooks/prompt-inject` | UserPromptSubmit hook: recall-keyword / long-prompt triggered memory injection | Auto-registered |
-| `hooks/post-commit-memory` | PostToolUse hook: instruct agent to store git commit summary | Auto-registered |
-| `hooks/session-stop` | Stop hook: auto-store session summary memory | Auto-registered |
+| `scripts/sync-skill.sh` | One-way canonical→installed mirror (anti-drift); run after editing the canonical skill | Maintenance only |
+
+The lifecycle hooks below live at the **plugin/repo root** (`../../hooks/`, one level up from this skill dir) and are auto-registered **only in the Claude Code plugin install** (a bare skill install has none of them — including auto credential redaction; use `batch-ingest.py --redact` there):
+
+| File (at `../../hooks/`) | Purpose | When active |
+|------|------|---------|
+| `hooks/common.sh` | Shared bash library for all hooks (config loading, API calls, JSON escaping) | Plugin install only — auto-loaded by hooks |
+| `hooks/session-start` | SessionStart hook: health check + memory recall injection | Plugin install only — auto-registered |
+| `hooks/prompt-inject` | UserPromptSubmit hook: recall-keyword / long-prompt triggered memory injection | Plugin install only — auto-registered |
+| `hooks/post-commit-memory` | PostToolUse hook: instruct agent to store git commit summary | Plugin install only — auto-registered |
+| `hooks/session-stop` | Stop hook: auto-store session summary memory | Plugin install only — auto-registered |
 
 ## When NOT to Use
 
