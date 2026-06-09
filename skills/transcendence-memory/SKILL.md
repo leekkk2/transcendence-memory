@@ -128,18 +128,19 @@ Tags: deploy, docker, port-conflict, 部署, 端口冲突
 
 See `references/best-practices.<lang>.md` §9 for the full redaction checklist.
 
-## AI Behavior — `/tm` is a slash command, NEVER a shell binary (STRICT)
+## AI Behavior — `/tm` is a slash command, not a bare shell binary (STRICT)
 
 `/tm` is a Claude Code **slash command** invoked through the `SlashCommand` tool.
-It is NOT a shell binary. The following will always fail with `command not found`:
+It is NOT a shell binary, so passing the slashed form to a shell always fails:
 
 ```bash
-$ tm search "..."          # ❌ command not found
-$ tm remember "..."        # ❌ command not found
-$ /tm search "..."         # ❌ no such file or directory
+$ /tm search "..."         # ❌ no such file or directory ( /tm is a slash command )
+$ tm-codex search "..."    # ❌ command not found ( no such binary )
+$ tm search "..."          # ❌ command not found — UNLESS the user installed
+                           #    `pipx install transcendence-memory-cli` (optional, not shipped here)
 ```
 
-There is also **no `tm` / `tm-codex` shell binary** — don't try to run one. The AI MUST use one of these paths only (all pure HTTP — never a shell into a DB):
+A separate, **optional** shell CLI named `tm` does exist (`pipx install transcendence-memory-cli`, shipped from the server repo's `cli-package/`). It is a *different thing* from the `/tm` slash command and is **not** bundled with this skill — only present if the user installed it themselves. Do not assume it exists, and never conflate `/tm <cmd>` (the slash command, this section) with the installed `tm <cmd>` binary. There is no `tm-codex` binary. The AI MUST use one of these paths only (all pure HTTP — never a shell into a DB):
 
 1. **Preferred — bundled wrapper script** (works on any agent — Claude / Gemini / Codex — in or out of Claude Code):
    ```bash
@@ -147,7 +148,7 @@ There is also **no `tm` / `tm-codex` shell binary** — don't try to run one. Th
    bash scripts/tm-search.sh query <q>          # multimodal RAG query
    bash scripts/tm-search.sh status             # one-line health probe
    ```
-   It reads `~/.transcendence-memory/config.toml`, builds the JSON body zsh-glob-safely (jq + heredoc, never bare braces), adds a WAF-compatible User-Agent, honors `*_PROXY` with auto-fallback to direct, and lazily absorbs a cold-start backend on first call — so agents stop guessing at a nonexistent `tm`/`tm-codex` binary. (No separate warm-up SOP — warm-up is handled inside the script.)
+   It reads `~/.transcendence-memory/config.toml`, builds the JSON body zsh-glob-safely (jq + heredoc, never bare braces), adds a WAF-compatible User-Agent, honors `*_PROXY` with auto-fallback to direct, and lazily absorbs a cold-start backend on first call — so agents don't need the optional `tm` CLI installed, and never need a (nonexistent) `tm-codex` binary. (No separate warm-up SOP — warm-up is handled inside the script.)
 
 2. **`SlashCommand` tool** (when running inside Claude Code):
    ```
@@ -164,9 +165,11 @@ There is also **no `tm` / `tm-codex` shell binary** — don't try to run one. Th
      -d "{\"container\":\"$CONTAINER\",\"query\":\"<query>\",\"topk\":5}"
    ```
 
-If the AI catches itself about to invoke `Bash({command: "tm ..."})` or
-`Bash({command: "/tm ..."})`, STOP and switch to one of the paths above.
-The same applies to the long-form alias `/transcendence-memory <command>`.
+If the AI catches itself about to invoke `Bash({command: "/tm ..."})` (slash-command
+form passed to a shell), STOP and switch to one of the paths above. The same applies
+to the long-form alias `/transcendence-memory <command>`. (`Bash({command: "tm ..."})`
+only works if the user installed the optional `transcendence-memory-cli` package — it
+is not part of this skill, so prefer the wrapper script or `SlashCommand` above.)
 
 > The `Example` column in the command table below shows the slash-command form.
 > Invoke via the `SlashCommand` tool. For raw HTTP fallback, see `references/api-reference.md`.
@@ -212,6 +215,18 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `auto status` | Show auto-memory configuration | `/tm auto status` |
 | `upgrade` | Pull latest skill scripts from the upstream repo | `/tm upgrade` |
 
+### Operational / admin HTTP endpoints (server v0.18, no `/tm` shortcut)
+
+These have no `/tm` command — call them directly over HTTP (all need auth). Full request / response schemas in [`references/api-reference.md`](./references/api-reference.md) and [`references/commands.md`](./references/commands.md).
+
+| Method + path | Purpose |
+|---|---|
+| `GET /index-status` · `GET /containers/{name}/index-status` | Per-container index state machine (`stale`/`indexing`/`ready`/…) + object counts + embed backlog summary — tells you whether a sibling is actually embedded before you union it |
+| `POST /embed-multimodal` (multipart) | Embed one media file (image/audio/video) via Gemini-native multimodal embedding → one LanceDB vector row, recallable by `/search`. Requires the container to route to a `gemini_native` profile |
+| `POST /containers/aliases` · `GET /containers/aliases` · `DELETE /containers/aliases/{alias}` | Manage container-name alias routing (alias → canonical); admin only |
+| `GET /admin/usage/{summary,endpoints,containers,timeseries}` · `POST /admin/usage/cleanup` | Request-usage analytics (call counts / latency / per-container / time buckets) + retention cleanup |
+| `GET /admin/ui` · `POST /admin/ui/{login,logout}` · `GET /admin/ui/me` | Cookie-session admin dashboard SPA (browser-facing; agents rarely call directly) |
+
 ## Gotchas — 最常踩的坑（写新代码前先扫一遍）
 
 | 症状 | 真因 | 修复 |
@@ -227,7 +242,10 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `/tm upgrade` 报 `fatal: Not possible to fast-forward` | 本地有 cherry-pick shadow 或 divergence | `git tag backup/pre-upgrade-$(date +%Y%m%d) HEAD && git reset --hard origin/main`（完全可回退） |
 | recall / search 查不到老知识但记得写过 | 标题用了 ASCII id 不是模糊自然语言 | 按本文 `## Behavior Conventions §3` 的 Title + trigger-words 模板写；老记忆 retrofit 用索引卡补一层（`references/best-practices.<lang>.md §8`） |
 | `/health` / `/search` 回 `200` 但服务其实没就绪 | 冷启动（切换/重启后）body 携带 `degraded:true` / `per_container_status: timeout\|not_initialized` / `initialized:false`，**200 ≠ 成功** | **解析 body**，命中冷启动信号就把同一查询短间隔重发几次直到 ok（`tm-search.sh` 已自动做）。`curl --retry` 抓不到（200 在它眼里就是成功） |
-| 单容器查询无故 `degraded:true` | 默认 `union:false`；但一旦走 union，存在却未 embed 的 sibling（如 `*_openai`）会把整次检索拖成 degraded | 主容器结果其实正常——本次显式传 `"union":false` 跳过 sibling，或先给 sibling 跑一次 `/embed` 再 union |
+| 单容器查询无故 `degraded:true` | 默认 `union:false`；但一旦走 union，存在却未 embed 的 sibling（如 `*_openai`）会把整次检索拖成 degraded | 主容器结果其实正常——本次显式传 `"union":false` 跳过 sibling，或先给 sibling 跑一次 `/embed` 再 union（v0.18 起 server 会自动**软跳过**未 embed 的 sibling，见下条） |
+| union 时仍看到 `not_initialized` sibling 噪音 / 整次检索失败 | v0.18：从未 embed（无 `chunks` 表）的 sibling 在 union 解析阶段被**软跳过**，不再拖累主容器；旧行为是把它算进 `per_container_status` 致 `degraded`/`error` | 让 sibling 先 `/embed` 一次即可下次自动恢复双轨；只要主容器出结果，本次就照常返回。判断某容器是否真就绪用 `GET /containers/{name}/index-status`（`state` 字段） |
+| 部分容器失败但本应有结果，却被当成整体失败 | v0.18 优雅降级：只要**任一容器**（尤其主容器）有结果就 200 返回，body 标 `is_degraded:true`（= 旧 `degraded`，同值双写）+ `fallback_source:"partial_containers"`；**全部失败才** `status:"error"`。部分成功 **不再**弹错误文案（`message` 为 null） | 读 `is_degraded` / `degraded`（任选，同值）判断结果完整性，照常渲染 `results`；只有 `status==="error"` 才当真失败。详 `references/troubleshooting.md` 降级段 |
+| 服务**拒绝启动**，日志打 `FATAL: EMBEDDING_DIM=X disagrees with LanceDB schemas` | 启动期 dim 一致性闸（v0.18 已在 prod）：`.env` 的 `EMBEDDING_DIM` 与已落库容器的 vec 列维度不符——历史上曾静默错配致 `/search` 连续 14h 报 dim 错。守卫宁可不启动也不放行 | 把 `EMBEDDING_DIM`/`EMBEDDING_MODEL` 对齐已存维度，或用新 model 重建受影响容器；**确在迁移途中**才临时 `TM_ALLOW_DIM_DRIFT=1` 跳过。这是 server 端 env，不在本 skill 配置 |
 | 有全局代理时直连超时 / 或反过来代理不通 | endpoint 常被 Cloudflare fronting：某些机器上 env 代理才是快且可靠的路径（GFW 区直连可能 ~12s 超时），另一些机器反之 | 别预设"代理 = 问题"。`tm-search.sh` 默认走 `*_PROXY`、连接失败再自动回退直连；`TM_NO_PROXY=1` 强制直连 |
 
 > **黄金法则**：HTTP 200 ≠ 业务完成。所有写路径（`/embed` / `/documents/*` / `/upload`）都是 fire-and-forget；只有 `/search` 同步。冷启动时连读路径的 200 都可能携带 degraded body——务必解析。
@@ -242,7 +260,7 @@ The core flow has only two steps:
 
 Or run `/tm connect --manual` and enter the values step by step.
 
-To verify connectivity afterwards, prefer `bash scripts/tm-search.sh status` (a zero-dependency health probe that runs on any agent — Claude / Gemini / Codex — and parses the body for cold-start signals, so a degraded `200` is not mistaken for success). There is no `tm` / `tm-codex` shell binary to call.
+To verify connectivity afterwards, prefer `bash scripts/tm-search.sh status` (a zero-dependency health probe that runs on any agent — Claude / Gemini / Codex — and parses the body for cold-start signals, so a degraded `200` is not mistaken for success). No binary needs to be installed for this — the wrapper script is enough; the optional `tm` CLI (`transcendence-memory-cli`) is a separate convenience, and there is no `tm-codex` binary.
 
 > After configuration is complete, `references/setup.md` no longer needs to be loaded into context.
 
