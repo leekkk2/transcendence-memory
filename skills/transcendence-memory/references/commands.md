@@ -468,6 +468,39 @@ curl -sS -X DELETE "${ENDPOINT}/jobs/12345" -H "X-API-KEY: ${API_KEY}"
 | `GET /admin/system-health` | 数值化诊断（阈值 / 队列计数 / 容器清单 / 资源快照） |
 | `GET /admin/profiles` | 列 embedding / reranker profile + route 表（secret 自动 redact） |
 | `POST /admin/probe-embedding?profile=<n>` | 单 profile 探活（latency + 实测 dim） |
+| `GET /index-status` · `GET /containers/{name}/index-status` | **v0.18** 容器索引状态机：`state` + 对象计数 + embed backlog 摘要 |
+| `POST /containers/aliases` · `GET /containers/aliases` · `DELETE /containers/aliases/{alias}` | **v0.18** 容器名 alias 路由 upsert / 列出 / 删除（admin） |
+| `POST /embed-multimodal`（multipart） | **v0.18** 单媒体文件 → Gemini 原生多模态 embedding → 一条 LanceDB 行（容器须路由到 `gemini_native` profile） |
+| `GET /admin/usage/{summary,endpoints,containers,timeseries}` · `POST /admin/usage/cleanup` | **v0.18** 请求用量分析（调用数 / 延迟 / 按容器 / 时间桶）+ 保留期清理 |
+| `GET /admin/ui` · `POST /admin/ui/{login,logout}` · `GET /admin/ui/me` | **v0.18** Cookie-session 管理面板 SPA（浏览器向，agent 少直调） |
+
+### v0.18 运维端点详解
+
+**`GET /index-status` / `GET /containers/{name}/index-status`** — 容器索引状态机，**union 前判断 sibling 是否真就绪**的权威来源（避免把未 embed 的 sibling 拉进来拖累整体）：
+
+```bash
+curl -sS "${ENDPOINT}/index-status" -H "X-API-KEY: ${API_KEY}" | jq          # 全容器批量
+curl -sS "${ENDPOINT}/containers/${CONTAINER}/index-status" -H "X-API-KEY: ${API_KEY}" | jq
+```
+
+单容器响应：`{"container":"...","state":"ready|indexing|stale|...","total_objects":N,"embedded_objects":M,"backlog_active":0,"backlog_counts":{...},"dead_count":0,"job_running":false,"next_retry_at":null,"last_error_class":null,"last_embed_ok_at":"...","last_embed_attempt_at":"..."}`。批量端点包成 `{"containers":[...],"count":N}`。入参是 alias 时解析到 canonical；从未 embed 过的容器 `embedded_objects:0` → state 落 `stale`/`unknown`。
+
+**`POST /embed-multimodal`** — multipart 表单，把单个媒体文件直接算成统一向量空间的一条向量行：
+
+```bash
+curl -sS -X POST "${ENDPOINT}/embed-multimodal" \
+  -H "X-API-KEY: ${API_KEY}" \
+  -F "container=${CONTAINER}" -F "file=@./photo.jpg" \
+  -F "caption=可选文字描述" -F "doc_id=可选稳定 id"
+```
+
+表单字段：`container`（必需）/ `file`（必需，媒体二进制）/ `caption`（可选，给出则与媒体联合 embed 并作为可读文本）/ `doc_id`（可选稳定 id）。缺 caption 时服务端经 VLM best-effort 自动生成（失败不阻塞落库，回退文件名）。要求目标容器路由到 `gemini_native` provider；空文件 400、超限 413、不支持的 mime 415。落库后 `/search` 即可向量检回。
+
+**`POST /containers/aliases`**（upsert）— body `{"alias":"短名","canonical":"真实容器","reason":"","status":"active|deprecated|removed","notes":""}`，返回写入行；`GET /containers/aliases` → `{"aliases":[...],"count":N}`；`DELETE /containers/aliases/{alias}` → `{"deleted":true,"alias":"..."}`（不存在 404）。删除只摘路由记录，**不**触碰 canonical 物理数据。
+
+**`GET /admin/usage/*`** — query 参数：`summary?window=24h`；`endpoints?window=7d&sort=calls&limit=20`；`containers?window=7d&sort=calls&limit=50`；`timeseries?path=/search&window=7d&bucket=1h`（`path` 必需）。`POST /admin/usage/cleanup` body `{"retention_days":N}` 删超期记录。
+
+**`GET /admin/ui` + `POST /admin/ui/login|logout` + `GET /admin/ui/me`** — Cookie-session 登录（HttpOnly + SameSite=Strict；POST 需 `X-Requested-With: XMLHttpRequest`）包住既有 api-key 网关，外加 SPA 兜底服务前端 bundle。浏览器面向，agent 一般用上面的 JSON 端点而非走 UI。
 
 ---
 

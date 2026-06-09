@@ -28,6 +28,11 @@
   - [GET /jobs](#get-jobs)
   - [DELETE /jobs/{job_id}](#delete-jobsjob_id)
   - [GET /admin/system-health](#get-adminsystem-health)
+  - [GET /index-status · GET /containers/{name}/index-status（v0.18）](#get-index-status--get-containersnameindex-statusv018)
+  - [POST /embed-multimodal（v0.18）](#post-embed-multimodalv018)
+  - [容器 alias 路由（v0.18）](#容器-alias-路由v018)
+  - [GET /admin/usage/*（v0.18）](#get-adminusagev018)
+  - [GET /admin/ui/*（v0.18）](#get-adminuiv018)
 - [Multi-Model 端点（v0.7.0+）](#multi-model-端点v070)
 - [读取配置的辅助方法](#读取配置的辅助方法)
 
@@ -584,6 +589,114 @@ curl -sS "${ENDPOINT}/admin/system-health" -H "X-API-KEY: ${API_KEY}" | jq
 - 排查 503 / `accepting_ingest=false` 时 → 用本端点拿数值与原因
 - 验证 env override 是否生效（`TM_MIN_AVAILABLE_MEM_MB` 等）→ 用本端点读 `thresholds`
 - 容器/租户清查 → 用本端点的 `available_containers`，不要去公开 `/health` 找
+
+### GET /index-status · GET /containers/{name}/index-status（v0.18）
+
+容器索引状态机（**需鉴权**）。union 多容器检索前，用它判断某个 sibling 是否**真的 embed 过**（避免把空镜像拉进来拖累整体）。
+
+```bash
+curl -sS "${ENDPOINT}/index-status" -H "X-API-KEY: ${API_KEY}" | jq               # 全容器批量
+curl -sS "${ENDPOINT}/containers/${CONTAINER}/index-status" -H "X-API-KEY: ${API_KEY}" | jq  # 单容器
+```
+
+单容器响应：
+
+```json
+{
+  "container": "my-project",
+  "state": "ready",
+  "total_objects": 128,
+  "embedded_objects": 128,
+  "backlog_active": 0,
+  "backlog_counts": {"waiting": 0, "retrying": 0, "dead": 0},
+  "dead_count": 0,
+  "job_running": false,
+  "next_retry_at": null,
+  "last_error_class": null,
+  "last_embed_ok_at": "2026-06-08T12:00:00Z",
+  "last_embed_attempt_at": "2026-06-08T12:00:00Z"
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `state` | 实时推导的状态机值（`ready` / `indexing` / `stale` / `unknown` …）。`embedded_objects:0` 的从未 embed 容器落 `stale`/`unknown` |
+| `total_objects` / `embedded_objects` | 对象总数 / 已 embed 数（子进程权威计数；无记录时回退 jsonl 行数） |
+| `backlog_active` / `backlog_counts` / `dead_count` | embedding backlog 摘要（含死信） |
+| `job_running` | 该容器是否有 embed 类 job 在 pending/running |
+| `next_retry_at` / `last_error_class` | backlog 下次重试时刻 / 最近错误类 |
+
+- 批量端点包成 `{"containers": [ <上述对象>, ... ], "count": N}`，容器并集 = 曾 embed 过 ∪ 有 backlog ∪ 当前目录。
+- 单容器：入参是 alias 时解析到 canonical；`removed` 容器 410；完全无记录 404。
+- **典型用法**：union 前查 sibling 的 `state` ——非 `ready` 就别 union（v0.18 server 也会自动软跳过未就绪 sibling）。
+
+### POST /embed-multimodal（v0.18）
+
+把单个媒体文件（图 / 音 / 视频）经 Gemini 原生多模态 embedding 算成统一向量空间的**一条 LanceDB 行**，`/search` 即可向量检回。与 `/documents/upload` 不同：后者走 RAGAnything + mineru 解析 + 知识图谱（图片靠 VLM 转写），本端点路径最短、不建 KG。**multipart 表单**（需鉴权）：
+
+```bash
+curl -sS -X POST "${ENDPOINT}/embed-multimodal" \
+  -H "X-API-KEY: ${API_KEY}" \
+  -F "container=${CONTAINER}" -F "file=@./photo.jpg" \
+  -F "caption=可选文字描述" -F "doc_id=可选稳定 id"
+```
+
+| 表单字段 | 必需 | 说明 |
+|---|---|---|
+| `container` | 是 | 目标容器，须路由到 `gemini_native` provider 的 embedding profile |
+| `file` | 是 | 媒体二进制 |
+| `caption` | 否 | 给出时与媒体作为联合 part 一起 embed，并作为该行可读文本；缺省回退文件名 |
+| `doc_id` | 否 | 稳定 id（缺省由 container+filename 派生） |
+
+缺 `caption` 时服务端经 route 的 VLM fallback 链 **best-effort** 自动生成 caption（全链挂也不阻塞落库——媒体原生向量仍可检回）。错误码：空文件 400 / 超 inline 限 413 / 不支持的 mime 415 / 上游 embed 失败 502。落库行 `docType:"multimodal"`、`source:"embed-multimodal"`、`metadata` 含 `modality`/`mime_type`/`size_bytes`/`caption`/`caption_source`。
+
+### 容器 alias 路由（v0.18）
+
+把短的 alias 名映射到真实 canonical 容器（**需鉴权，admin**）。删除只摘路由记录，**不**触碰 canonical 物理数据。
+
+```bash
+# upsert 一条 alias
+curl -sS -X POST "${ENDPOINT}/containers/aliases" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"alias":"proj","canonical":"my-project","reason":"shorthand","status":"active","notes":""}'
+
+curl -sS "${ENDPOINT}/containers/aliases" -H "X-API-KEY: ${API_KEY}"          # 列出 → {"aliases":[...],"count":N}
+curl -sS -X DELETE "${ENDPOINT}/containers/aliases/proj" -H "X-API-KEY: ${API_KEY}"  # 删 → {"deleted":true,"alias":"proj"}
+```
+
+| body 字段（POST） | 必需 | 说明 |
+|---|---|---|
+| `alias` / `canonical` | 是 | 均走 `validate_container_name`（防路径遍历） |
+| `status` | 否 | `active`（默认）/ `deprecated` / `removed`；其它值 400 |
+| `reason` / `notes` | 否 | 备注 |
+
+DELETE 不存在的 alias → 404。alias 删后该名回退「未注册」，下次写入会被当新容器自动创建。
+
+### GET /admin/usage/*（v0.18）
+
+请求用量分析（**需鉴权**），数据源是队列 DB 的请求日志。
+
+```bash
+curl -sS "${ENDPOINT}/admin/usage/summary?window=24h"                         -H "X-API-KEY: ${API_KEY}" | jq
+curl -sS "${ENDPOINT}/admin/usage/endpoints?window=7d&sort=calls&limit=20"    -H "X-API-KEY: ${API_KEY}" | jq
+curl -sS "${ENDPOINT}/admin/usage/containers?window=7d&sort=calls&limit=50"   -H "X-API-KEY: ${API_KEY}" | jq
+curl -sS "${ENDPOINT}/admin/usage/timeseries?path=/search&window=7d&bucket=1h" -H "X-API-KEY: ${API_KEY}" | jq
+curl -sS -X POST "${ENDPOINT}/admin/usage/cleanup" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"retention_days":90}'
+```
+
+| 端点 | 关键 query / body | 说明 |
+|---|---|---|
+| `GET /summary` | `window`（默认 `24h`） | 窗口内总览 |
+| `GET /endpoints` | `window` `7d` · `sort` `calls` · `limit` `20` | 按端点聚合（`sort` 非法值 400） |
+| `GET /containers` | `window` `7d` · `sort` `calls` · `limit` `50` | 按容器聚合 |
+| `GET /timeseries` | `path`（**必需**）· `window` `7d` · `bucket` `1h` | 单端点时间序列 |
+| `POST /cleanup` | body `retention_days` | 删超保留期的用量记录 |
+
+### GET /admin/ui/*（v0.18）
+
+Cookie-session 管理面板（浏览器向；agent 一般用上面的 JSON 端点而非走 UI）。`POST /admin/ui/login`（body `{"password":"..."}` 形态的 `LoginRequest`）签发 HttpOnly + SameSite=Strict 会话 cookie（`TM_ENV=dev` 时关 `Secure` 以便本地 HTTP 调试）；`POST /admin/ui/logout` 清会话；`GET /admin/ui/me` 回当前登录态。POST 路由强制 `X-Requested-With: XMLHttpRequest`（CSRF 防御）。`GET /admin/ui` 及 `GET /admin/ui/{path}` 兜底服务构建好的 React bundle（`/app/static/admin`）。
 
 ## Multi-Model 端点（v0.7.0+）
 

@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 
 DEFAULT_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".transcendence-memory")
 # 非默认 User-Agent：Cloudflare WAF 会 1010 拦截 urllib 默认 UA
-USER_AGENT = "transcendence-memory-skill/0.4"
+USER_AGENT = "transcendence-memory-skill/0.5"
 HTTP_TIMEOUT = 8
 SWEEP_CAP = 30  # 单次 sweep 最多探测的 job 数，其余留待下次会话
 STATUS_RE = re.compile(r"status=([a-zA-Z]+)")

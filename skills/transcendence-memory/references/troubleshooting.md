@@ -17,6 +17,8 @@
   - [search 返回 200 但 body 有错误](#search-返回-200-但-body-有错误)
   - [冷启动：服务端索引未热起（HTTP 200 但 body 未就绪）](#冷启动服务端索引未热起http-200-但-body-未就绪)
   - [`degraded:true` — union 把未初始化 sibling 拉进来拖累整体](#degradedtrue--union-把未初始化-sibling-拉进来拖累整体)
+  - [v0.18 优雅降级：部分成功不再整体失败（`is_degraded` / `fallback_source`）](#v018-优雅降级部分成功不再整体失败is_degraded--fallback_source)
+  - [v0.18：未 embed 的 `_openai` sibling 被软跳过（`not_initialized`）](#v018未-embed-的-_openai-sibling-被软跳过not_initialized)
   - [search 无结果](#search-无结果)
   - [embed 任务失败 / 卡住（上游 embedding 限速）](#embed-任务失败--卡住上游-embedding-限速)
   - [update/delete 后变更未生效](#updatedelete-后变更未生效)
@@ -41,6 +43,7 @@
   - [客户端代码用 `enable_rerank` 字段没反应](#客户端代码用-enable_rerank-字段没反应)
   - [Reranker upstream 返回 400 `model_price_error` / `model_not_found`](#reranker-upstream-返回-400-model_price_error--model_not_found)
   - [`/query` 报 `AssertionError: Embedding dim mismatch, expected: X, but loaded: Y`](#query-报-assertionerror-embedding-dim-mismatch-expected-x-but-loaded-y)
+  - [服务拒绝启动：`FATAL: EMBEDDING_DIM=X disagrees with LanceDB schemas`（v0.18 启动闸）](#服务拒绝启动fatal-embedding_dimx-disagrees-with-lancedb-schemasv018-启动闸)
 
 ## 快速诊断
 
@@ -335,6 +338,37 @@ done
 - 确实要双轨召回 → 先给 sibling 跑一次 `/embed` 让它初始化，之后 union 才不会 degraded。
 
 > 判定要点：`degraded:true` 时先看 `per_container_status` 是哪个容器坏的——如果坏的是 `*_openai` sibling 而主容器 `ok`，主结果可信，按上面 `union:false` 止血即可，不必当成数据丢失。
+
+### v0.18 优雅降级：部分成功不再整体失败（`is_degraded` / `fallback_source`）
+
+**v0.18 行为变更**：union 多容器检索时，**只要任一容器（尤其主容器）出结果**，`/search` 就返回 **HTTP 200** 且照常给 `results`，body 标记：
+
+- `is_degraded: true`（= 旧 `degraded`，**同值双写**——Agent 读新名、前端读旧名，任选其一即可）
+- `fallback_source: "partial_containers"`（部分容器成功、部分失败时）
+- `per_container_status` 仍列出每容器 `ok` / `timeout` / `not_initialized` / `error: <msg>`
+- 部分成功时 `message` 为 `null`（**不再**弹红色错误文案）
+
+**只有全部容器都失败**（无任一结果）才回 `status: "error"` + 人话错误 `message`（仍是 HTTP 200，body 标志为准——转 503 是 Phase 2 才考虑的事）。
+
+**对调用方的含义**：
+
+| 你看到 | 判定 | 动作 |
+|---|---|---|
+| `status:"ok"` + `is_degraded:false` | 完整成功 | 正常用 |
+| `status:"ok"` + `is_degraded:true` + `results` 非空 | 部分降级但有结果 | **照常渲染 `results`**；可选提示哪些容器没就绪（看 `per_container_status`） |
+| `status:"error"` | 全部容器失败 | 这才是真失败，按 `message` 排查 |
+
+> 旧代码若硬判 `status==="error"` 之外都算失败、或只认 `degraded` 字段——升 v0.18 后建议改读 `is_degraded`（与 `degraded` 同值，未来 `degraded` 可能淡出）。**别把部分降级当数据丢失**。
+
+### v0.18：未 embed 的 `_openai` sibling 被软跳过（`not_initialized`）
+
+**v0.18 行为变更**：union 解析阶段，server 会探测 sibling 是否真有 `chunks` 表；**从未 embed 过的 sibling 直接被软跳过**，不再算进 `per_container_status`、不再把整次检索拖成 `degraded`/`error`。这根治了「主容器好好的、却因为一个空 `*_openai` 镜像导致整条搜索失败」的老问题。
+
+- **现象（修复后）**：单容器查询自动 union 时，若 sibling 未初始化 → 响应里 `containers` 只剩主容器、`union_applied:false`、**没有** `not_initialized` 噪音、`results` 来自主容器。
+- **想恢复双轨**：给 sibling 跑一次 `/embed`（让它建出 `chunks` 表）→ 下次 union 自动把它带回来。
+- **确认 sibling 是否就绪**：`GET /containers/<sibling>/index-status` 看 `state`（非 `ready` 就是还没 embed 好）。
+
+> 聚合处仍保留 `not_initialized` 分支作防御（万一 sibling 解析后又被清空也不拖垮主流程）。所以你偶尔仍可能在 `per_container_status` 看到它——但只要主容器 `ok` 就照常返回。
 
 ### search 无结果
 
@@ -660,3 +694,23 @@ curl -sS -X POST "$GATEWAY/v1/rerank" -H "Authorization: Bearer $KEY" \
 **短期 workaround**：备份 + 清空全局文件让 LightRAG 重建（**会清空所有 container 共享的 KG**，下次 ingest 重抽 entity/relation）。详见 server 仓库 `docs/operations/known-issue-global-vdb-isolation.md`。
 
 **避免触发**：单 server 不混用多 dim container 走 `/query`。`POST /search` 不受影响（直查 LanceDB，不加载 NanoVectorDB）。
+
+### 服务拒绝启动：`FATAL: EMBEDDING_DIM=X disagrees with LanceDB schemas`（v0.18 启动闸）
+
+**症状**：容器起不来，启动日志打一段 `=====` 包裹的：
+
+```
+[startup-check] FATAL: EMBEDDING_DIM=3072 disagrees with LanceDB schemas:
+  - container=my-project: stored dim=1024
+  ...
+  Refusing to start to prevent silent /search RuntimeError storm.
+```
+
+**根因**：v0.18 在进入服务循环前做 **dim 一致性闸**——逐个 container 探 `chunks.lance` 的 `vector` 列实际维度，与运行时 `EMBEDDING_DIM` 比对。来源教训：2026-05-29 曾把 `EMBEDDING_DIM=3072` 配到 1024 维表上，导致所有 `/search` 连续 ~14h 报 `query dim doesn't match column vector dim`，而 `/health` 因为从不发向量查询一直绿。守卫**宁可不启动也不放行**这种静默错配。
+
+**修复（择一）**：
+- 把 `.env` 的 `EMBEDDING_DIM`（和 `EMBEDDING_MODEL`）对齐已落库容器的维度——通常是 `.env` 与 `profiles.yaml` 漂移、或误换 model 所致。
+- 用新 model 重建受影响容器（`scripts/migrate_embeddings.py` in-place 换 dim）。
+- **确在迁移途中**（明知短暂不一致）才临时 `TM_ALLOW_DIM_DRIFT=1` 跳过这道闸（设后日志打 `TM_ALLOW_DIM_DRIFT=1 set — skipping dim consistency check`）。**别**当常规启动参数挂着——它会让 14h 静默事故重演。
+
+> 这是 **server 端 env**，不在本 skill 的 `config.toml`。skill 侧能做的只是识别这条 FATAL 日志、提示运维去对齐 dim。`EMBEDDING_DIM` 未设时此闸 best-effort 跳过（交由 runtime 内部 profiles 兜底）。
