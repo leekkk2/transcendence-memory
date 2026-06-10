@@ -370,6 +370,33 @@ done
 
 > 聚合处仍保留 `not_initialized` 分支作防御（万一 sibling 解析后又被清空也不拖垮主流程）。所以你偶尔仍可能在 `per_container_status` 看到它——但只要主容器 `ok` 就照常返回。
 
+### v0.19.0：`/search` 空结果但 `blocked_low_score>0` —— score-gate 拦截非库空
+
+**现象**：`/search` 回 `status:"ok"`、`results:[]`，但 body 里 `blocked_low_score` 是个 `>0` 的数；容器明明有数据。
+
+**根因**：v0.19.0 score-gate。服务端 `profiles.yaml` 配了 `similarity_threshold`（或 Dashboard 热重载了 `config:rag:similarity_threshold`），或请求里传了 `score_threshold`——命中分（L2 距离，**越小越相关**）高于阈值的全被丢弃，`blocked_low_score` = 被拦条数。
+
+**与冷启动 / 库空的区分**：
+
+| 你看到 | 判定 |
+|---|---|
+| `blocked_low_score>0` + `results:[]` | score-gate 拦截（**有命中但都被判太弱**） |
+| `per_container_status` 含 `not_initialized`/`timeout` + `initialized:false` | 冷启动（见冷启动段） |
+| `blocked_low_score:0` + `results:[]` + 容器 `index-status` ready | 真的没相关记忆 |
+
+**规避**：放宽或去掉请求级 `score_threshold`（传 `null` 或 `≤0` 关）重查；或运维在 Dashboard 下调 `similarity_threshold`。**默认部署不开 score-gate**（阈值 None），此字段恒 `0`，老行为逐字节不变。
+
+### v0.19.0：行号溯源 `lineStart`/`lineEnd` 何时有值
+
+**现象**：想用 `results[].lineStart`/`lineEnd` 或 `citations[].lineStart`/`lineEnd` 给命中加"源文件第 X–Y 行"定位，却拿到 `null`。
+
+**根因（非 bug）**：P4（行号溯源，v0.19.0）后 ingest 的新 chunk 才在 `metadata` 里带 `lineStart`/`lineEnd`；**P4 之前 ingest 的老 chunk 没有这两个键 → 投影为 `null`**。这是刻意的向后兼容——**无 LanceDB schema 迁移、无需 re-embed**，老库照常工作。
+
+**要点**：
+- 行号是 server 端 ingest 时自动按 chunk 切分计算并写入 `metadata` JSON，**客户端 ingest 无需传任何新字段**。
+- 渲染源定位链接前先判 `lineStart != null`；老记忆无行号属预期，不要当错误。
+- `citations[]` 是 `/search` 默认开（`citation_enabled=true`）的结构化溯源投影；`/query` 默认关（`query_citation_enabled=false`，恒 `[]`）。
+
 ### search 无结果
 
 ```bash

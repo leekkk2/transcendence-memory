@@ -163,7 +163,8 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | `container_pattern` | string | 否 | — | 模糊匹配容器名 |
 | `pattern_mode` | string | 否 | `substring` | `substring` / `prefix` / `glob` |
 | `union` | bool\|null | 否 | `null` | 单 container 是否自动并 sibling `_openai`；`null`=随 server 默认 |
-| `per_container_timeout_s` | float | 否 | 12.0 | 单容器子查询超时（0.5–30，v0.11.1+） |
+| `per_container_timeout_s` | float | 否 | 12.0 | 单容器子查询超时（0.5–30，v0.11.1+；v0.19.0 起 server 默认放宽到 30.0 降低冷启动误降级） |
+| `score_threshold` | float\|null | 否 | `null` | **v0.19.0**：请求级 score-gate（L2 距离上界，越小越相关）。`null`=随 server `profiles.yaml` 的 `similarity_threshold`（默认 None=关）；`≤0`=显式关。被拦命中数计入响应 `blocked_low_score` |
 | `timeout_s` | int | 否 | 600 | subprocess 整体超时 |
 
 完整入参定义见 [api-reference.md POST /search](./api-reference.md#post-search)。
@@ -204,13 +205,23 @@ curl -sS -X POST "${ENDPOINT}/search" \
       "source": "",
       "text": "...",
       "tags": [],
-      "metadata": {}
+      "metadata": {},
+      "lineStart": null,
+      "lineEnd": null
     }
   ],
   "containers": ["my-container", "my-container_openai"],
   "per_container_status": {"my-container": "ok", "my-container_openai": "ok"},
   "degraded": false,
-  "union_applied": false
+  "is_degraded": false,
+  "fallback_source": null,
+  "union_applied": false,
+  "rerank_applied": false,
+  "citations": [
+    {"chunkId": "<taskId>#client-ingest#<idx>", "sourcePath": "...", "section": "client_ingest", "score": 0.56, "container": "my-container", "lineStart": null, "lineEnd": null}
+  ],
+  "blocked_low_score": 0,
+  "fallback_rendered": null
 }
 ```
 
@@ -219,6 +230,11 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | `results[].text` | 命中正文（主字段；别名 `content`/`chunk` 见 api-reference） |
 | `results[].score` | 相关性分（rerank 后可能呈 `vectorScore`/`rerankScore`，见 api-reference） |
 | `results[].taskId` + `chunkId` | 客户端 `id` **不回流** `results[].id`；按这两者或 `text` 匹配 |
+| `results[].lineStart` / `lineEnd` | **v0.19.0**：命中 chunk 在源文件中的 1-based 起止行号；**P4 前 ingest 的老 chunk 恒 `null`**（无 schema 迁移、无需 re-embed），新 chunk 才有值。可据此构造"文件 X 第 42–67 行"式源定位 |
+| `citations` | **v0.19.0**：结构化溯源数组（投影 `chunkId`/`sourcePath`/`section`/`score`/`container`/`lineStart`/`lineEnd`）。`/search` 默认**开**（`citation_enabled=true`）；老客户端忽略不影响 |
+| `blocked_low_score` | **v0.19.0**：被 score-gate 阈值拦掉的命中数。**默认 0**（score-gate 默认关）；若 `>0` 且 `results` 空 = 阈值过严**不是**库空（见 troubleshooting） |
+| `fallback_rendered` | **v0.19.0**：opt-in 兜底模板渲染串。**默认 `null`**（未配模板时恒 null，行为与 P4 前逐字节一致）；非 null 是"无命中/全降级"的结构化提示，**非高置信检索结果** |
+| `is_degraded` / `fallback_source` | 降级语义别名（`is_degraded`=`degraded` 同值双写；`fallback_source="partial_containers"` 表部分容器成功）。判定见解析约定 |
 | `per_container_status` | 跨容器每容器状态：`ok` / `timeout` / `not_initialized` / `error` |
 | `degraded` | 任一目标容器超时/失败/未初始化 → `true`（结果不完整） |
 | `union_applied` | 自动并入 sibling `_openai` 时 `true` |
@@ -228,6 +244,8 @@ curl -sS -X POST "${ENDPOINT}/search" \
 - 每条命中**没有顶级 `id` 字段**。`/ingest-memory/objects` 时给的 `id` 不会原样回流到 `results[].id`；下游按 `taskId + chunkId` 或 `text` 内容自行匹配。
 - 同一条 ingest 的长文本**会被切成多个 chunks**（`chunkId` 末尾 `#<idx>` 是切片序号）；search 可能返回多条同 `taskId` 的不同 chunk。
 - `title` 字段在多数情况下为空 `""`，即使 ingest 时显式给了；以 `text` 头几行为准。
+- **行号溯源（v0.19.0）**：`results[].lineStart`/`lineEnd` 与 `citations[]` 给出命中 chunk 的源文件行范围——**仅 P4 后 ingest 的新 chunk 有值，老 chunk 恒 `null`**（向后兼容、零 re-embed）。渲染源定位链接前先判 `lineStart != null`。
+- **score-gate 拦截 ≠ 库空（v0.19.0）**：`/search` 默认不开 score-gate（`blocked_low_score` 恒 0）。若服务端配了 `similarity_threshold` 或你传了请求级 `score_threshold`，低于阈值的命中被丢弃并计入 `blocked_low_score`；看到 `results:[]` 同时 `blocked_low_score>0` 是阈值过严，**别误判为"没有这条记忆"**。
 - **`/search` vs `/query` 字段名不同**：`/search` 命中在 `results[]`、正文字段是 **`text`**；`/query` 的检索证据在 **`sources[]`**、正文字段是 **`content`**（不是 `text`）。跨两个端点解析时不要假设同名。
 - **开启 reranker 后分数字段会变**：未 rerank 时只有单一 `score`（向量相似度）；rerank 后可能改为 / 附加 `vectorScore`（召回阶段）+ `rerankScore`（重排后，排序以它为准）。读分数优先认 `rerankScore`（若存在），否则回落 `score`；不要硬编码只读 `score`。
 - **结果可能被 `topk` / `top_k` 截断，长文本只回中间 chunk**：要拿全文按 `taskId` 拉该来源全部 chunk，或调大 `topk` 重查——单条命中不等于该记忆全文。

@@ -5,6 +5,33 @@ All notable changes to this skill plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows semantic versioning.
 
+## v0.7.0 — 2026-06-10
+
+Aligns the skill docs + `tm-search.sh` with server **v0.19.0** (blueprint Redis
+governance layer). Every v0.19 addition is **opt-in / backward-compatible**, so
+the skill's own behavior is unchanged — this is a docs + wrapper-rendering update
+that lets agents correctly read the new `/search` and `/query` response fields.
+
+### Added
+
+- **`/search` response fields** (`references/commands.md`, `references/api-reference.md`):
+  `citations[]` (default ON for `/search`), per-hit + citation `lineStart`/`lineEnd`
+  source line numbers (`null` on pre-P4 chunks — no schema migration, no re-embed),
+  `blocked_low_score` (score-gate suppressed count), `fallback_rendered` (opt-in
+  template, default `null`), `rerank_applied`, plus the request-level `score_threshold`.
+- **`/query` response fields**: `top_score`, `citations` (default **OFF** for `/query`),
+  `fallback_rendered`.
+- **Gotchas + troubleshooting**: "empty `results` + `blocked_low_score>0` = score-gate,
+  not an empty DB"; "`lineStart`/`lineEnd` is `null` on old chunks — expected".
+- **`tm-search.sh`**: distilled output now renders per-hit `L<start>–<end>` line ranges
+  and a `blocked_low_score` warning line.
+
+### Notes
+
+- Server-side v0.19 governance (Redis, config center, token metering, dreaming engine,
+  governance toolbox, `/admin/*` dashboard) stays out of scope per `When NOT to Use` —
+  those are operator concerns, not client-skill API surface.
+
 ## v0.6.0 — 2026-06-09
 
 Aligns the skill docs with server **v0.18** (RAG graceful degradation + new
