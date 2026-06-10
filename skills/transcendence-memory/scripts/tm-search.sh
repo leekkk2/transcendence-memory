@@ -453,18 +453,24 @@ cmd_search() {
   else
     # Distilled, full-text (NOT truncated) output: hit count + per-hit
     # score/title/full body. taskId/container shown for provenance.
+    # v0.19.0: also renders per-hit lineStart–lineEnd (when the chunk carries
+    # source line numbers) + a blocked_low_score warning (score-gate, not empty DB).
     jq -r '
       "hits: \((.results // []) | length)"
       + " | union_applied: \(.union_applied // false)"
       + " | degraded: \(.degraded // false)"
       + (if (.per_container_status // {}) | length > 0
            then " | per_container_status: " + ((.per_container_status | to_entries | map("\(.key)=\(.value)") | join(",")))
+           else "" end)
+      + (if ((.blocked_low_score // 0) > 0)
+           then " | ⚠ blocked_low_score: \(.blocked_low_score) (score-gate 拦截·非库空)"
            else "" end),
       "",
       ( (.results // [])
         | to_entries[]
         | "── #\(.key + 1)  score=\(.value.score // "?")"
           + (if (.value.container // "") != "" then "  [\(.value.container)]" else "" end)
+          + (if (.value.lineStart // null) != null then "  L\(.value.lineStart)–\(.value.lineEnd // "?")" else "" end)
           + (if (.value.title // "") != "" then "  title: \(.value.title)" else "" end)
           + "\n" + ((.value.text // .value.content // "(no text field)"))
       )

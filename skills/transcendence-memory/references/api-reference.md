@@ -174,7 +174,8 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | `pattern_mode` | string | 否 | `substring`（默认）/ `prefix` / `glob` |
 | `timeout_s` | int | 否 | subprocess 整体超时秒数（默认 600） |
 | `union` | bool | 否 | **v0.11.0+**：单 container 入参时是否自动追加 sibling `_openai` 镜像。`null`（默认）= 走 `profiles.yaml` 的 `union_search_default`；`true/false` 显式覆盖。`containers` / `container_pattern` 模式下被忽略 |
-| `per_container_timeout_s` | float | 否 | **v0.11.0+**：单容器子查询超时（0.5–30s，**默认 12.0**，v0.11.1+；v0.11.0 默认 3.0 但 subprocess cold-start 实测不够稳）。仅多容器场景启用；超时容器在 `per_container_status` 标记 `timeout`，不影响其余 |
+| `per_container_timeout_s` | float | 否 | **v0.11.0+**：单容器子查询超时（0.5–30s，**默认 12.0**，v0.11.1+；v0.11.0 默认 3.0 但 subprocess cold-start 实测不够稳；v0.19.0 起 server 默认放宽到 30.0）。仅多容器场景启用；超时容器在 `per_container_status` 标记 `timeout`，不影响其余 |
+| `score_threshold` | float\|null | 否 | **v0.19.0**：请求级 score-gate（L2 距离上界，越小越相关）。`null`=随 `profiles.yaml` 的 `similarity_threshold`（默认 None=关）；`≤0`=显式关；请求级优先于全局配置。被拦命中数计入响应 `blocked_low_score` |
 
 跨容器示例：
 
@@ -215,6 +216,14 @@ curl -sS -X POST "${ENDPOINT}/search" \
 - `degraded` (bool)：至少一个目标容器 `timeout` / `error` / `not_initialized` → `true`；结果不完整但已尽力合并
 - `union_applied` (bool)：单 container 查询自动追加 sibling `_openai` 镜像时为 `true`；客户端可借此区分主动 union 与显式 multi-container 调用
 - `per_container_status` 新增 `"timeout"` 取值（per-container 3s 超时）
+
+**v0.19.0 新增字段**（全部 opt-in / 向后兼容；旧客户端收到"关闭"语义默认值，逐字节不破坏现有逻辑）：
+- `is_degraded` (bool) = `degraded` 的 Agent 友好别名（**同值双写**）；`fallback_source` (str|null)：部分容器成功时 = `"partial_containers"`，否则 `null`
+- `citations` (array)：命中的结构化溯源，每项 `{chunkId, sourcePath, section, score, container, lineStart, lineEnd}`。`/search` 默认**开**（`citation_enabled=true`，可经 Dashboard 热重载）
+- `results[].lineStart` / `lineEnd` (int|null) + `citations[].lineStart`/`lineEnd`：命中 chunk 的源文件 **1-based 起止行号**。**P4（行号溯源）前 ingest 的老 chunk 恒 `null`**——行号存于 chunk `metadata` JSON，**无 LanceDB schema 迁移、无需 re-embed**；新 chunk ingest 后自动带值，客户端 ingest **无需传任何新字段**（server 端自动算）
+- `blocked_low_score` (int)：被 score-gate 拦掉的命中数，**默认 0**（score-gate 默认关）。请求级 `score_threshold` 或服务端 `similarity_threshold` 开启后才可能 `>0`
+- `fallback_rendered` (str|null)：**默认 `null`**。仅当服务端配了 `fallback_template` 且发生 score-gate 全拦 / 全容器降级时渲染结构化兜底串——**非高置信检索结果**，客户端默认无感
+- `rerank_applied` (bool)：本次是否经 reranker 重排（`/search` 恒 `false`，rerank 仅作用于 `/query`）
 
 **自动 union 触发条件**（v0.11.0+）：
 - `union_search_default: true`（profiles.yaml 顶层）或单请求 `"union": true`
@@ -440,6 +449,11 @@ curl -sS -X POST "${ENDPOINT}/query" \
 ```
 
 > **字段名注意**：`/query` 的来源数组叫 **`sources`**（不是 `/search` 的 `results`），主键是蛇形 `chunk_id`（不是 `chunkId`）。开 reranker 后 `score` 语义变为重排后分，可能并列出现 `vectorScore`/`rerankScore` —— 字段别名与排序约定见 [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d)。
+
+**v0.19.0 新增字段**（向后兼容；与 `/search` 同名字段语义一致）：
+- `top_score` (float|null)：score-gate 命中时透出的 top1 chunk L2 距离；**默认关时恒 `null`**
+- `citations` (array)：答案级结构化溯源。**`/query` 默认关**（`query_citation_enabled=false`）→ 恒为 `[]`；运维侧开启后才回填。注意与 `/search` 不同：`/search` 的 citations 默认**开**
+- `fallback_rendered` (str|null)：**默认 `null`**。仅服务端配了 `fallback_template` 且 `not_initialized`/`score_gated` 时渲染兜底串，客户端默认无感
 
 ---
 
