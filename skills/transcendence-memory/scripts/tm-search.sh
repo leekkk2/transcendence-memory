@@ -19,8 +19,9 @@
 #      (per_container_status timeout/not_initialized). curl --retry can't see
 #      that — only inspecting the body can. We re-send on degraded bodies.
 #
-# Read-only by design: only status / search / query. No write endpoints, so we
-# never use --retry-all-errors (which would unsafely retry non-idempotent writes).
+# Read-only by design: only status / search / query / containers / jobs. No
+# write endpoints, so we never use --retry-all-errors (which would unsafely
+# retry non-idempotent writes). Writes live in tm-remember.sh.
 #
 # Pure config-driven: NO hardcoded endpoint / api_key / container / private host.
 
@@ -66,6 +67,7 @@ readonly HEALTH_CONNECT_TIMEOUT=3   # status probe must fail fast if down
 readonly HEALTH_MAX_TIME=5
 readonly SEARCH_MAX_TIME=120
 readonly QUERY_MAX_TIME=180
+readonly ADMIN_MAX_TIME=30          # /containers + /jobs/{id}: tiny metadata reads
 
 # Cold-start lazy-absorption tuning (search only). A cold server answers 200 with
 # a degraded body; we re-send the SAME query until per_container goes all-ok.
@@ -341,6 +343,49 @@ http_get() {
   LAST_CURL_RC="$rc"
 }
 
+# Authenticated GET helper for the small read-only admin endpoints
+# (/containers, /jobs/{id}). Same proxy-first + direct-fallback model as
+# http_get, plus the X-API-KEY header (those endpoints require auth, unlike
+# /health). Read-only → CURL_RESILIENCE retries are safe here.
+http_get_auth() {
+  local url="$1" max_time="$2"
+  local out rc
+
+  _get_auth_once() {  # $1 = extra connect-timeout (empty = CURL_RESILIENCE's 5s); $@ rest = noproxy args
+    local ct="$1"; shift
+    local extra=()
+    [[ -n "$ct" ]] && extra+=(--connect-timeout "$ct")
+    set +e
+    out="$(
+      curl -sS "$url" \
+        "${CURL_RESILIENCE[@]}" \
+        --max-time "$max_time" \
+        ${extra[@]+"${extra[@]}"} \
+        "$@" \
+        -A "$USER_AGENT" \
+        -H "X-API-KEY: $API_KEY" \
+        -w $'\n%{http_code}'
+    )"
+    rc=$?
+    set -e
+  }
+
+  if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
+    _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+  else
+    _get_auth_once ""
+    if is_connection_failure "$rc" "${out##*$'\n'}"; then
+      err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
+      _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+    fi
+  fi
+
+  LAST_HTTP="${out##*$'\n'}"
+  LAST_BODY="${out%$'\n'*}"
+  if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
+  LAST_CURL_RC="$rc"
+}
+
 # Detect a cold/degraded search body. Returns 0 (true) if we should re-send.
 # A cold server answers HTTP 200 but the BODY signals not-ready:
 #   - per_container_status has any value matching timeout|not_initialized
@@ -544,6 +589,91 @@ cmd_query() {
   fi
 }
 
+cmd_containers() {
+  local json_out=0 pattern=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_out=1; shift ;;
+      *)      pattern="$1"; shift ;;
+    esac
+  done
+
+  load_config
+
+  local url="$ENDPOINT/containers"
+  # @uri-encode the pattern so spaces/CJK/globs survive the query string.
+  [[ -n "$pattern" ]] && url="$url?pattern=$(jq -rn --arg p "$pattern" '$p|@uri')"
+
+  http_get_auth "$url" "$ADMIN_MAX_TIME"
+
+  if [[ "$LAST_CURL_RC" -ne 0 || ! "$LAST_HTTP" =~ ^2 ]]; then
+    classify_and_exit "$LAST_CURL_RC" "$LAST_HTTP" "$LAST_BODY"
+  fi
+
+  if [[ "$json_out" -eq 1 ]]; then
+    printf '%s\n' "$LAST_BODY"
+  else
+    # Tab-separated table: name / objects / index state. The server returns a
+    # boolean `indexed` today; prefer a richer `index_state` string if a future
+    # server version ships one (don't hardcode the old shape).
+    jq -r '
+      "containers: \(.count // ((.containers // []) | length))",
+      "NAME\tOBJECTS\tINDEX_STATE",
+      ( (.containers // [])[]
+        | "\(.name)\t\(.objects // "?")\t\(
+            .index_state
+            // (if .indexed == true then "indexed"
+                elif .indexed == false then "not_indexed"
+                else "?" end))"
+      )
+    ' <<<"$LAST_BODY" 2>/dev/null || {
+      err "containers returned non-JSON or unexpected shape:"
+      printf '%s\n' "$LAST_BODY" >&2
+      exit "$EX_TRANSIENT"
+    }
+  fi
+}
+
+cmd_jobs() {
+  local json_out=0 job_id=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_out=1; shift ;;
+      *)      job_id="$1"; shift ;;
+    esac
+  done
+  if [[ -z "$job_id" || ! "$job_id" =~ ^[0-9]+$ ]]; then
+    err "usage: $0 jobs [--json] <numeric-job-id>   (the 'pid' returned by /embed and /documents/*)"
+    exit "$EX_USAGE"
+  fi
+
+  load_config
+  http_get_auth "$ENDPOINT/jobs/$job_id" "$ADMIN_MAX_TIME"
+
+  if [[ "$LAST_CURL_RC" -ne 0 || ! "$LAST_HTTP" =~ ^2 ]]; then
+    classify_and_exit "$LAST_CURL_RC" "$LAST_HTTP" "$LAST_BODY"
+  fi
+
+  if [[ "$json_out" -eq 1 ]]; then
+    printf '%s\n' "$LAST_BODY"
+  else
+    # No top-level `status` field exists — the truth is running/exit_code
+    # (done=0, failed=non-0, pending/running=null). Render that as plain words.
+    jq -r '
+      "job \(.pid // "?"): "
+      + (if .running == true then "running"
+         elif .exit_code == 0 then "done (exit_code=0)"
+         elif (.exit_code != null) then "FAILED (exit_code=\(.exit_code))"
+         else "queued (not running yet)" end)
+      + (if (.message // "") != "" then " — \(.message)" else "" end)
+    ' <<<"$LAST_BODY" 2>/dev/null || {
+      err "jobs returned non-JSON or unexpected shape:"
+      printf '%s\n' "$LAST_BODY" >&2
+      exit "$EX_TRANSIENT"
+    }
+  fi
+}
+
 usage() {
   cat >&2 <<EOF
 tm-search.sh — hardened, config-driven retrieval for transcendence-memory.
@@ -552,6 +682,8 @@ Usage:
   $0 status                       Health probe (one-line summary).
   $0 search [--json] <query>      Semantic search (LanceDB). Lazy cold-start absorb.
   $0 query  [--json] <question>   Multimodal RAG query (LightRAG + LLM answer).
+  $0 containers [--json] [pat]    List containers (name/objects/index state).
+  $0 jobs [--json] <id>           One job's state (running / exit_code, plain words).
 
 Flags:
   --json                          Emit raw server JSON instead of distilled text.
@@ -585,6 +717,8 @@ main() {
     status)        cmd_status "$@" ;;
     search)        cmd_search "$@" ;;
     query)         cmd_query "$@" ;;
+    containers)    cmd_containers "$@" ;;
+    jobs)          cmd_jobs "$@" ;;
     -h|--help|help|"") usage; [[ -z "$sub" ]] && exit "$EX_USAGE" || exit "$EX_OK" ;;
     *)             err "unknown subcommand: $sub"; usage; exit "$EX_USAGE" ;;
   esac

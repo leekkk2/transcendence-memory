@@ -25,6 +25,16 @@ that lets agents correctly read the new `/search` and `/query` response fields.
   not an empty DB"; "`lineStart`/`lineEnd` is `null` on old chunks — expected".
 - **`tm-search.sh`**: distilled output now renders per-hit `L<start>–<end>` line ranges
   and a `blocked_low_score` warning line.
+- **`scripts/tm-remember.sh`** (new): one-shot quick-memory store wrapper for
+  `POST /ingest-memory/objects` — jq-built JSON (eliminates the hand-escaped-JSON
+  422 class, the dominant ingest failure mode in production usage), self-contained
+  secret redaction (same pattern set as `hooks/common.sh`, no hooks/ dependency),
+  WAF-friendly UA + proxy auto-fallback, `--title/--tags/--container/--id/--no-embed/--json`,
+  one-line success output `stored id=... container=... embed=queued|skipped`.
+- **`tm-search.sh` read-only subcommands**: `containers [pattern]` (GET `/containers`
+  rendered as a name/objects/index-state table) and `jobs <id>` (GET `/jobs/{id}`
+  rendered as plain-words `running`/`done`/`FAILED` from `running`/`exit_code` —
+  no misleading top-level `status` field assumption).
 
 ### Notes
 
