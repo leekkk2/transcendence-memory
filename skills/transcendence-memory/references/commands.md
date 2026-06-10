@@ -257,6 +257,16 @@ curl -sS -X POST "${ENDPOINT}/search" \
 
 ### `/tm remember` → POST /ingest-memory/objects
 
+首选 wrapper 脚本（jq 构 JSON 杜绝手写转义 422、内置 secret 脱敏、代理自动回退）：
+
+```bash
+bash <skill-path>/scripts/tm-remember.sh "记忆正文" \
+  [--title t] [--tags a,b] [--container c] [--id mem-x] [--no-embed] [--json]
+# 成功输出一行: stored id=... container=... embed=queued|skipped
+```
+
+底层 HTTP 调用（仅 wrapper 不可用时手写；注意 JSON 转义是历史 422 高发根因）：
+
 ```bash
 MEM_ID="mem-$(date +%s)"
 curl -sS -X POST "${ENDPOINT}/ingest-memory/objects" \

@@ -147,6 +147,9 @@ A separate, **optional** shell CLI named `tm` does exist (`pipx install transcen
    bash scripts/tm-search.sh search <query>     # semantic recall over the configured container
    bash scripts/tm-search.sh query <q>          # multimodal RAG query
    bash scripts/tm-search.sh status             # one-line health probe
+   bash scripts/tm-search.sh containers [pat]   # list containers (name/objects/index state)
+   bash scripts/tm-search.sh jobs <id>          # one job's state in plain words
+   bash scripts/tm-remember.sh "text" [--title t] [--tags a,b]   # quick memory store (jq-built JSON + secret redaction)
    ```
    It reads `~/.transcendence-memory/config.toml`, builds the JSON body zsh-glob-safely (jq + heredoc, never bare braces), adds a WAF-compatible User-Agent, honors `*_PROXY` with auto-fallback to direct, and lazily absorbs a cold-start backend on first call — so agents don't need the optional `tm` CLI installed, and never need a (nonexistent) `tm-codex` binary. (No separate warm-up SOP — warm-up is handled inside the script.)
 
@@ -202,7 +205,7 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `search <query>` | Run semantic search over memories | `/tm search architecture decision from the last deployment` |
 | `search --match <pattern> <query>` | Search across all containers whose name fuzzy-matches `<pattern>` | `/tm search --match my-project docker compose` |
 | `search --all <query>` | Search across **every** container at once | `/tm search --all release notes` |
-| `remember <text>` | Store one memory quickly | `/tm remember Port conflicts caused the deployment failure` |
+| `remember <text>` | Store one memory quickly (preferred wrapper: `bash scripts/tm-remember.sh "<text>"` — jq-built JSON, no hand-escaping 422s, built-in secret redaction) | `/tm remember Port conflicts caused the deployment failure` |
 | `update <id> <text>` | Update an existing memory's text in the current container | `/tm update mem-001 New corrected content` |
 | `embed` | Rebuild the index for the current container | `/tm embed` |
 | `query <question>` | Run a multimodal RAG query and get an LLM-generated answer | `/tm query What is the overall project architecture?` |
@@ -292,7 +295,8 @@ Auth methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`.
 | File | Purpose | When to load |
 |------|------|---------|
 | `references/templates/config.toml.template` | Config file template | During first-time setup |
-| `scripts/tm-search.sh` | Preferred retrieval wrapper: `search` / `query` / `status` over HTTP (config load, zsh-glob-safe JSON, proxy auto-fallback, lazy cold-start warm-up) | Primary path for recall + health probe |
+| `scripts/tm-search.sh` | Preferred retrieval wrapper: `search` / `query` / `status` / `containers` / `jobs` over HTTP (config load, zsh-glob-safe JSON, proxy auto-fallback, lazy cold-start warm-up) | Primary path for recall + health probe + read-only admin peeks |
+| `scripts/tm-remember.sh` | Preferred quick-store wrapper: `POST /ingest-memory/objects` with jq-built JSON (kills the hand-escaping 422 class), self-contained secret redaction, `--tags/--title/--no-embed/--json` | Primary path for `/tm remember`-style single-memory writes |
 | `scripts/batch-ingest.py` | Bulk ingest script (built-in `--redact`) | For large memory imports |
 | `scripts/job-ledger.py` | Async job ledger: `add` / `sweep` / `list` for background KG build jobs | Used by `/tm jobs`, `/tm upload`, and the SessionStart hook |
 | `scripts/sync-skill.sh` | One-way canonical→installed mirror (anti-drift); run after editing the canonical skill | Maintenance only |
