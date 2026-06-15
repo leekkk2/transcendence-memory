@@ -54,6 +54,8 @@ That file documents the complete command set:
 | `auto on` / `auto off` / `auto status` | Toggle automatic memory hooks |
 | `upgrade` | Pull latest skill scripts |
 
+Server **v0.20** also adds a governance subsystem reached over HTTP (no `/tm` shortcut) — runtime config center (`GET/PUT /admin/config`), a 6-tool governance toolbox (`/admin/tools`), a dreaming memory-tidy subsystem (`/admin/dreaming/*`), and an opt-in LLM orchestration agent + human approval queue (`/admin/agent/*`). All dry-run-first and off by default; see the canonical skill's [`references/governance.md`](../transcendence-memory/references/governance.md).
+
 ## Why this exists
 
 Claude Code's skill frontmatter does **not** support `aliases:` field (verified via official `Frontmatter reference`). To let users invoke either `/transcendence-memory remember ...` or the shorter `/tm remember ...` (and the equivalent `Skill(skill: "tm", ...)` agent calls), this alias skill mirrors the canonical entry.
