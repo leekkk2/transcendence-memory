@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Long-term memory for AI coding agents. Self-hosted, multi-modal, works across sessions. Connect to your own memory backend for semantic search, persistent recall, and session summaries.",
-    "version": "0.6.0"
+    "version": "0.8.0"
   },
   "plugins": [
     {
