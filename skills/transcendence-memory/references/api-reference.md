@@ -792,6 +792,14 @@ curl -sS -X POST "${ENDPOINT}/admin/tools/compress_knowledge_cluster/invoke" \
 
 **dry_run 语义**：SAFE 工具（`manage_token_quotas` / `analyze_retrieval_latency` 只读；`update_container_routing` 加性写）**总是真执行**；LLM / 破坏性工具默认 `dry_run=true` 只产 plan 预览，显式 `dry_run=false` 才真执行。破坏性 `snapshot_and_quarantine` 经此端点 `dry_run=false` 可直接真执行（运维手动操作）——但在 **agent 循环里它永不自动执行**，只进审批队列（见下）。
 
+**`compress_knowledge_cluster` 响应面（v0.21.0 幂等 4 态，详见 [`governance.md`](./governance.md) §2.2）**：
+
+- `result.action` ∈ `first_card` / `skipped_unchanged` / `consolidated` / `superseded`（真执行）；dry_run 预览的 plan 里则是 `plan.decision` ∈ `first_card` / `skip_unchanged` / `consolidate` / `supersede`。
+- **顶层 `status` ≠ action**：skip 路径顶层 `status` 是 **`ok`**（不是 `skipped_unchanged`——后者只在 `result.action`，否则响应校验 500）；建首卡/合并/取代为 `applied`。
+- `result.cluster_fingerprint`（簇指纹幂等键）、`result.cluster_group`（supersede 链稳定分组键）、`result.card_id`（当前卡 id）始终带。
+- 取代/合并时带 `result.supersedes`（被退役卡 id 列表）+ `result.superseded_count` + `result.superseded_path`（governance 可逆快照路径）；skip 时带 `result.card_id`=既有卡、`reindex_required=false`、不调 LLM。
+- dry_run 预览的 plan 额外带 `batch_count` / `estimated_bytes` / `cluster_size` / `source_ids` / `decision` / `superseded_card_ids` / `new_source_count`（不调 LLM 的可执行预览）。
+
 ### GET /admin/dreaming/status · POST /admin/dreaming/trigger（v0.20）
 
 梦境子系统（后台/手动记忆整理周期）。详见 [`governance.md`](./governance.md) §3。

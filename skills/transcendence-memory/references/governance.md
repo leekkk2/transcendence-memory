@@ -1,6 +1,6 @@
-# Governance Framework (server v0.20)
+# Governance Framework (server v0.20 → v0.21.0)
 
-> 服务端 v0.20 引入的「自治记忆治理」子系统总览：**治理工具箱**（6 工具）+ **梦境子系统**（dreaming）+ **治理编排 Agent**（LLM tool-use 循环 + 人工审批）。
+> 服务端 v0.20 引入的「自治记忆治理」子系统总览：**治理工具箱**（6 工具）+ **梦境子系统**（dreaming）+ **治理编排 Agent**（LLM tool-use 循环 + 人工审批）。**v0.21.0** 给 `compress_knowledge_cluster` 加了**幂等 4 态**（§2.2）与**批预算默认 256 KiB**（§2 末）。
 > 全部端点都在 `/admin/*` 下、走统一鉴权（`X-API-KEY` / `Authorization: Bearer` / cookie session），默认**安全态**——一个全新部署不会自动改任何数据。
 >
 > 端点完整请求/响应 spec 见 [`api-reference.md`](./api-reference.md) §治理与梦境端点；命令速查见 [`commands.md`](./commands.md) §治理 / 梦境。
@@ -53,7 +53,7 @@
 | `manage_token_quotas` | global | **SAFE**（只读） | 真执行（dry_run 对 SAFE 是 no-op） | 同左 |
 | `analyze_retrieval_latency` | container | **SAFE**（只读） | 真执行 | 同左 |
 | `update_container_routing` | container | **SAFE**（加性写） | 预览合并后的 routing blob，不落盘 | 经 config_store 加性合并写入（保留已有项） |
-| `compress_knowledge_cluster` | container | **LLM**（附加式） | 产 plan 预览（聚类哪个簇 + 簇内来源，不调 LLM） | 经 rag_engine 网关 LLM 把同主题（同 tags 簇）压成一张高密度索引卡，**附加不删源**（回滚 = 删那一行新卡） |
+| `compress_knowledge_cluster` | container | **LLM**（幂等附加式） | 产 plan 预览（聚类哪个簇 + 簇内来源 + **4 态决策预告**，不调 LLM） | 幂等 4 态（见 §2.2）：未变更 skip 零 LLM / 无卡建首卡 / 多孤儿廉价合并零 LLM / 内容变更重总结取代旧卡。**附加不删源**，退役走可逆快照 |
 | `tune_model_parameters` | container | **LLM**（护栏写） | 预览将喂给 LLM 的信号 + 当前参数 + 护栏边界 | LLM 评估检索质量 → allow-list + 范围护栏内经 config_store 加性调参 |
 | `snapshot_and_quarantine` | container | **破坏性（可逆）** | 产隔离计划预览 | 全量快照 + 隔离低价值/异常记忆到隔离文件，**零硬删**（可逆） |
 
@@ -63,7 +63,8 @@
 - **LLM**：`compress_knowledge_cluster` / `tune_model_parameters`。需要网关 LLM。默认 dry_run 只产**可执行预览**（真实 plan，不是参数回声），显式 `dry_run=false` 才真执行。所有 LLM 调用经 `rag_engine` 网关（HR-9：env 驱动 `LLM_*`，不硬编码任何 provider / model / base_url / key）。
 - **破坏性**：仅 `snapshot_and_quarantine`。**可逆**——隔离 = 快照 + 移到隔离文件，从不硬删。即便如此，在 agent 循环里它**永远不自动执行**，只记一条 pending 审批；唯一真执行入口是 `/admin/agent/approvals/{id}/approve`（人工）。
 
-> 大簇分批：`compress_knowledge_cluster` 对超大簇会按字节预算分批（`config:agent:compress_batch_bytes` / `TM_COMPRESS_BATCH_BYTES`，默认 8 MiB），每批送 LLM 前再 `_truncate_for_llm` 兜底，避免 request-too-large。早期版本曾对大簇返回 400，现已分批修复。
+> 大簇分批：`compress_knowledge_cluster` 对超大簇会按字节预算分批（`config:agent:compress_batch_bytes` / `TM_COMPRESS_BATCH_BYTES`，**默认 256 KiB（262144 B）**），每批送 LLM 前再 `_truncate_for_llm` 兜底，避免 request-too-large。早期版本曾对大簇返回 400，现已 map-reduce 分批修复。
+> **为何 256 KiB 而非旧值 8 MiB**：用真实混合 CJK+Latin 簇内容直探网关实测——768 KiB(786432 B) 返 200 OK、1 MiB(1048576 B) 返 HTTP 400 `context_too_large`（瓶颈是小模型 token context window，不是 transport 字节上限）；CJK UTF-8 约 1.5 字节/token、纯 ASCII 约 4 字节/token，按字节估算会严重高估真实 CJK 内容能塞的量，故对 768 KiB 留 ~3× 余量取 256 KiB 为安全默认，给 system prompt + 输出 token 留余量。治理操作低频，大簇多分几批可接受；接大 context 模型可经 `TM_COMPRESS_BATCH_BYTES` 调高。
 
 ### 2.1 开关解析（容器覆盖 > 全局）
 
@@ -75,6 +76,29 @@
 
 global-scope 工具（`manage_token_quotas`）忽略容器维度。改开关走 `PUT /admin/config`（写 `config:tools:global_enabled_map` 或动态键 `config:tools:container:{c}:enabled_map`），**不旁路** config_store 校验。
 
+### 2.2 compress 幂等 4 态（v0.21.0 头号特性）
+
+`compress_knowledge_cluster` 不再「无脑追加新卡」——它据**簇指纹**（`cluster_fingerprint` = 对排序后 `source_ids` + 内容/时间摘要确定性派生；源增删或源被原地编辑都会变指纹）与该簇已有的索引卡比对，自动落到下列四态之一。决策由纯函数 `_compress_decision` 算出，**dry_run 预览与真执行共用同一决策**（所见即所得，`result.decision` / plan 里直接预告会走哪态）：
+
+| action（`result.action`） | 触发条件 | 调 LLM？ | 写新卡？ | 退役旧卡？ | 顶层 `status` | `reindex_required` |
+|---|---|---|---|---|---|---|
+| `first_card` | 该簇无既有索引卡（无 prior） | ✅ 是 | ✅ 建首卡 | — | `applied` | `true` |
+| `skipped_unchanged` | 恰一张 prior 且其指纹 == 本次指纹（源/内容都没变） | ❌ 否 | ❌ 否 | ❌ 否 | **`ok`**（非 `skipped_unchanged`） | `false` |
+| `consolidated` | prior ≥2 张，其中一张指纹匹配本次（内容没变，其余是历史孤儿/近重复卡，按 `source_ids` Jaccard≥0.5 兜底匹配上）→ 廉价合并 | ❌ 否 | ❌ 保留匹配卡 | ✅ 退役多余孤儿 | `applied` | `false` |
+| `superseded` | 有 prior 但无一张指纹匹配（簇内容变了）→ 重新 summarize | ✅ 是 | ✅ 新卡 | ✅ 退役全部 prior | `applied` | `true` |
+
+> ⚠️ **`status` ≠ `action`**：skip 路径的**顶层 `status` 是 `ok`**（`ToolInvokeResponse.status` 是受限枚举，`skipped_unchanged` 不在其中会令响应校验 500）；「跳过」语义只由 **`result.action='skipped_unchanged'`** 表达。同理 supersede 路径 `result.action='superseded'`、consolidate 路径 `result.action='consolidated'`。
+
+退役**永不硬删**：被取代/合并掉的旧卡移出 active 主文件（退出 search/embed），写入 `governance/superseded-cards-<ts>.jsonl` 可逆快照（带 `metadata.status='superseded'` + `superseded_by`），任何时刻可回滚。源记忆始终保留。
+
+三条不变量值得背下：
+
+- **append-only + 可逆**：从不硬删——新卡追加、旧卡进 governance 快照，源永不动。
+- **幂等**：无数据变更（指纹一致）→ `skipped_unchanged`，**零 LLM、零新卡**，解决早期「无变更反复 compress 不断叠加近重复卡」的问题。
+- **终态唯一**：无论历史堆过多少孤儿卡，consolidate/supersede 后该簇恒只剩一张 active 当前卡。
+
+幂等/取代默认开启（`config:agent:compress_idempotent` / `config:agent:compress_supersede`，或 env `TM_COMPRESS_IDEMPOTENT` / `TM_COMPRESS_SUPERSEDE`，默认 `true`）；两者都置 `false` 可灰度回退到旧「无脑追加」语义。
+
 ---
 
 ## 3. 梦境子系统（dreaming）
@@ -83,7 +107,7 @@ global-scope 工具（`manage_token_quotas`）忽略容器维度。改开关走 
 
 - **总闸** `config:dreaming:global_enabled`（默认 **true**，但仅在调度开启或被手动触发时才动）。
 - **后台调度** `config:dreaming:scheduler_enabled`（默认 **false** = 不自动跑）；`config:dreaming:trigger_cron`（默认 `0 2 * * *` 每日凌晨 2 点）。调度器在 lifespan 接线，但开关不开就不跑——**全新部署零自治行为**。
-- **批处理模型** `config:dreaming:batch_model`（默认 `gpt-4o-mini`，经网关；可换更强模型）。
+- **批处理模型** `config:dreaming:batch_model`（状态字段，经网关可配置；**不硬编码具体模型**）。**注意**：P6 梦境本身 **report-only、不直接调用任何模型**（见 `dreaming.py` 注释 "P6 dreaming is report-only and does NOT call any model"）——它只产候选报告，索引卡压缩等真需 LLM 蒸馏的动作 defer 给治理工具箱（`compress_knowledge_cluster`，走网关配置的模型）。故 `batch_model` 仅作状态/未来用途字段，当前梦境周期不据它发起任何 LLM 调用。
 - **破坏性二次守护**：`trigger` 的 `dry_run` 默认 **true**（仅产候选报告，不删）。即便传 `dry_run=false`，真删除**仍**受 `config:dreaming:prune_apply`（默认 **false**）二次守护——所以单凭一个请求体无法删数据。
 - **剪枝信号**：`config:dreaming:prune_threshold`（默认 0.3，价值评分低于此入候选）、`config:dreaming:graph_prune_enabled`（默认 true，图谱孤点纳入候选）、`config:dreaming:cache_threshold`（默认 10 次访问入高频缓存）。
 - **报告隔离**：`DreamReport.excluded_from_rag` 恒 true；`status` ∈ `ok` / `skipped_global_disabled`（总闸关时返回后者、不执行）。
@@ -132,7 +156,7 @@ global-scope 工具（`manage_token_quotas`）忽略容器维度。改开关走 
 | `config:dreaming:global_enabled` | bool | `true` | 梦境系统总开关 |
 | `config:dreaming:scheduler_enabled` | bool | `false` | 后台自动调度（默认不自动跑） |
 | `config:dreaming:trigger_cron` | str | `0 2 * * *` | 调度 cron |
-| `config:dreaming:batch_model` | str | `gpt-4o-mini` | 批处理模型（经网关） |
+| `config:dreaming:batch_model` | str | （网关配置的模型） | 批处理模型状态字段（经网关可配置，不硬编码）；P6 梦境 report-only 不直接调它，真需 LLM 时 defer 给 compress |
 | `config:dreaming:prune_apply` | bool | `false` | 破坏性删除是否真生效（二次守护） |
 | `config:dreaming:prune_threshold` | float | `0.3` | 低价值剪枝阈值 |
 | `config:dreaming:graph_prune_enabled` | bool | `true` | 图谱孤点纳入候选 |
@@ -146,8 +170,12 @@ global-scope 工具（`manage_token_quotas`）忽略容器维度。改开关走 
 | `config:agent:max_steps` | int | `6` | 单次最大步数 |
 | `config:agent:run_timeout_sec` | int | `300` | 运行墙钟上限（秒） |
 | `config:agent:default_agent_name` | str | `dream-orchestrator` | 默认 Agent 名 |
+| `config:agent:compress_batch_bytes` | int | `262144`（256 KiB） | compress 单批 prompt UTF-8 字节预算（见 §2 末；env `TM_COMPRESS_BATCH_BYTES` 优先） |
+| `config:agent:compress_row_char_cap` | int | `20000` | compress 单条源记忆截断字符上限 |
+| `config:agent:compress_idempotent` | bool | `true` | 指纹未变跳过 compress（§2.2 `skipped_unchanged`）；置 false 退旧追加（env `TM_COMPRESS_IDEMPOTENT`） |
+| `config:agent:compress_supersede` | bool | `true` | 簇变更时取代退役旧卡（§2.2 `superseded`/`consolidated`）；置 false 退旧追加（env `TM_COMPRESS_SUPERSEDE`） |
 
-> env 覆写（`TM_AGENT_*` 系列）优先于 `config:agent:*`，见 [SKILL.md](../SKILL.md) §env 说明 + [`api-reference.md`](./api-reference.md)。`config:agent:compress_batch_bytes` / `config:agent:compress_row_char_cap` 控制 compress 分批字节/单行字符上限。
+> env 覆写（`TM_AGENT_*` 系列）优先于 `config:agent:*`，见 [SKILL.md](../SKILL.md) §env 说明 + [`api-reference.md`](./api-reference.md)。`config:agent:compress_batch_bytes` / `config:agent:compress_row_char_cap` 控制 compress 分批字节/单行字符上限（env `TM_COMPRESS_BATCH_BYTES` 优先于配置键）；`config:agent:compress_idempotent` / `config:agent:compress_supersede`（env `TM_COMPRESS_IDEMPOTENT` / `TM_COMPRESS_SUPERSEDE`）控制 §2.2 幂等 4 态。
 
 ---
 

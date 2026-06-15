@@ -765,10 +765,10 @@ curl -sS -X POST "$GATEWAY/v1/rerank" -H "Authorization: Bearer $KEY" \
 
 **症状**：对一个记忆很多的大容器跑 `POST /admin/tools/compress_knowledge_cluster/invoke`（`dry_run=false`）时，早期版本可能返回 **400**（簇全文超过单次 LLM 请求上限，request-too-large）；现在则看到 result 里出现多张局部索引卡 / 分批账目。
 
-**根因 + 现状**：`compress_knowledge_cluster` 取同主题（同 tags 簇）最大簇压成高密度索引卡。**超大簇会按字节预算分批**——每批单独压成一张局部索引卡，送 LLM 前再经 `_truncate_for_llm` 兜底截断，避免整批超限。早期未分批时大簇会触发 400，**现已修复**（分批 + 截断）。压缩是**附加式不删源**（回滚 = 删掉新增的索引卡行），簇 <2 不压缩（单条无聚合价值）。
+**根因 + 现状**：`compress_knowledge_cluster` 取同主题（同 tags 簇）最大簇压成高密度索引卡。**超大簇会按字节预算 map-reduce 分批**——每批单独压成一张局部索引卡再 reduce 合并，送 LLM 前再经 `_truncate_for_llm` 兜底截断，避免整批超限。早期未分批时大簇会触发 400，**现已修复**。批预算**默认 256 KiB（262144 B）**——真实混合 CJK+Latin 内容实测 1 MiB 触发 400 `context_too_large`、768 KiB OK，故降到 256 KiB 给上下文留余量（旧默认 8 MiB 是错的）。压缩是**附加式不删源**（v0.21.0 起幂等 4 态见 [`governance.md`](./governance.md) §2.2：未变更 skip / 首卡 / 廉价合并 / 取代；退役旧卡走 governance 可逆快照、源永不删），簇 <2 不压缩（单条无聚合价值）。
 
 **处理 / 调参**：
-- 分批字节预算：`config:agent:compress_batch_bytes`（或 env `TM_COMPRESS_BATCH_BYTES`，默认 8 MiB）。簇极大仍想更稳 → 调小批字节。
+- 分批字节预算：`config:agent:compress_batch_bytes`（或 env `TM_COMPRESS_BATCH_BYTES` 优先，默认 **256 KiB / 262144 B**）。簇极大仍想更稳 → 调小批字节；接大 context 模型可调高。
 - 单行字符上限：`config:agent:compress_row_char_cap`。
 - 先 `dry_run`（默认）预览会聚类哪个簇 + 簇内来源 + 字节账目（不调 LLM），确认范围再 `dry_run=false` 真执行。
 - 真执行改了记忆主文件 → response `result.reindex_required=true` 会触发 best-effort re-embed（`result.reindex_job`）；re-embed 入队失败只记 warning + notes，不影响压缩结果本身。

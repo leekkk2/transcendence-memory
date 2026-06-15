@@ -5,6 +5,42 @@ All notable changes to this skill plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows semantic versioning.
 
+## v0.8.0 — 2026-06-16
+
+Aligns the skill docs with server **v0.21.0**. The governance subsystem (6-tool
+toolbox / dreaming / opt-in LLM orchestration agent + reversible dual-gate) was
+already documented for server v0.20; this release backfills the two
+`compress_knowledge_cluster` facts that drifted from production: its **idempotent
+4-state behavior** and the corrected **batch-budget default**. All changes are
+**docs-only** — no skill behavior change.
+
+### Changed
+
+- **compress batch budget default corrected** (`references/governance.md`,
+  `references/troubleshooting.md`): `config:agent:compress_batch_bytes` /
+  `TM_COMPRESS_BATCH_BYTES` default is **256 KiB (262144 B)**, not the old
+  **8 MiB**. Rationale: real mixed CJK+Latin clusters hit HTTP 400
+  `context_too_large` at 1 MiB while 768 KiB returns 200 — CJK UTF-8 is far more
+  token-dense per byte than ASCII, so the byte budget is dropped to 256 KiB
+  (~3× headroom over 768 KiB) to leave room for the system prompt + output tokens
+  (map-reduce batching + `_truncate_for_llm` backstop).
+
+### Added
+
+- **compress idempotent 4-state** (`references/governance.md` §2.2,
+  `references/api-reference.md` ToolInvokeResponse): `first_card` (no existing
+  card → LLM builds the first), `skipped_unchanged` (cluster fingerprint
+  unchanged → **zero LLM, zero new card**, top-level `status='ok'` +
+  `result.action='skipped_unchanged'`), `consolidated` (multiple same-cluster
+  orphan cards, `source_ids` Jaccard ≥ 0.5 → **zero-LLM** cheap merge, keep the
+  fingerprint match, retire the rest), `superseded` (cluster content changed →
+  LLM re-summarize, supersede old cards). All append-only + reversible governance
+  snapshots (never a hard delete) + idempotent (no change → no accumulation).
+- **dreaming `batch_model` clarification**: P6 dreaming is **report-only and does
+  not call any model**; `batch_model` is a state field — real LLM distillation is
+  deferred to the governance toolbox (`compress`, via the gateway-configured
+  model). No hardcoded model id (HR-9).
+
 ## v0.7.0 — 2026-06-10
 
 Aligns the skill docs + `tm-search.sh` with server **v0.19.0** (blueprint Redis
