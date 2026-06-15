@@ -71,6 +71,7 @@ api-reference.md 给"完整字段类型 / 别名 / 取全文"细节。三者保�
 | `upgrade` | `git pull`（本地） | 否 | 文本 | 不发 HTTP |
 
 > 完整端点（含 `/documents/text`、`/ingest-structured`、`/admin/*`、`/jobs` 列表与取消）见 [api-reference.md](./api-reference.md)。
+> **v0.20 治理 / 梦境 / 编排 Agent** 端点（`/admin/config` · `/admin/tools` · `/admin/dreaming/*` · `/admin/agent/*`）无 `/tm` shortcut，见本文 [§治理 / 梦境 / 编排 Agent](#治理--梦境--编排-agentv020) 与 [`governance.md`](./governance.md)。
 
 ---
 
@@ -529,6 +530,52 @@ curl -sS -X POST "${ENDPOINT}/embed-multimodal" \
 **`GET /admin/usage/*`** — query 参数：`summary?window=24h`；`endpoints?window=7d&sort=calls&limit=20`；`containers?window=7d&sort=calls&limit=50`；`timeseries?path=/search&window=7d&bucket=1h`（`path` 必需）。`POST /admin/usage/cleanup` body `{"retention_days":N}` 删超期记录。
 
 **`GET /admin/ui` + `POST /admin/ui/login|logout` + `GET /admin/ui/me`** — Cookie-session 登录（HttpOnly + SameSite=Strict；POST 需 `X-Requested-With: XMLHttpRequest`）包住既有 api-key 网关，外加 SPA 兜底服务前端 bundle。浏览器面向，agent 一般用上面的 JSON 端点而非走 UI。
+
+---
+
+## 治理 / 梦境 / 编排 Agent（v0.20，无 `/tm` shortcut）
+
+> 服务端 v0.20 自治记忆治理子系统。**全部需鉴权**，无 `/tm` 命令——直接 HTTP 调。总览 + 安全模型见 [`governance.md`](./governance.md)；完整 spec 见 [api-reference.md 治理与梦境端点](./api-reference.md#治理与梦境端点v020)。下表的「命令名」是约定俗成的口头速记（如 `tm tools`），不是真有这个 slash command。
+
+| 口头速记 | HTTP 方法 + 路径 | 用途 | 关键参数 / 字段 |
+|---|---|---|---|
+| `tm config`（列） | GET /admin/config | 列全部运行时配置（有效值 / override / 默认） | 敏感键 `value` 恒 null，仅 `configured` |
+| `tm config <key>=<val>` | PUT /admin/config | 单条/批量写覆盖（热重载） | `{"updates":[{"key","value"}]}`；`value:null` 清覆盖 |
+| `tm tools` | GET /admin/tools | 工具矩阵（全局开关 + 各容器 resolved/raw + 6 工具描述） | `global_enabled_map` / `containers[]` |
+| `tm tools invoke <tool>` | POST /admin/tools/{tool}/invoke | 调一个治理工具 | `{container?, params?, dry_run?=true}`；SAFE 总执行，LLM/破坏性须 `dry_run=false` |
+| `tm dreaming status` | GET /admin/dreaming/status | 梦境状态（开关 / 调度 / cron / 各容器配置 / 最近报告） | `scheduler_enabled` / `last_report` |
+| `tm dreaming trigger` | POST /admin/dreaming/trigger | 手动跑一次梦境周期 | `{container?, dry_run?=true}`；删除仍受 `prune_apply` 二次守护 |
+| `tm agent invoke <name>` | POST /admin/agent/{name}/invoke | 入队一次治理 agent run | `{container?, goal?, dry_run?=true, allow_apply?=false}`；需 `TM_AGENT_ORCHESTRATION_ENABLED=1` |
+| `tm agent runs` | GET /admin/agent/runs | 历史 run（newest first） | `?limit=50` |
+| `tm agent approvals` | GET /admin/agent/approvals | 待审批队列（破坏性提案） | `?status=pending&limit=50` |
+| `tm agent approvals <id> approve` | POST /admin/agent/approvals/{id}/approve | **唯一**破坏性真执行入口（人工背书） | 404 = 不存在/已决/已过期 |
+| `tm agent approvals <id> reject` | POST /admin/agent/approvals/{id}/reject | 拒绝（不执行） | 404 同上 |
+
+最小 curl 示例（`ENDPOINT` / `API_KEY` 取自本地 `~/.transcendence-memory/config.toml`）：
+
+```bash
+# 看治理工具箱矩阵
+curl -sS "${ENDPOINT}/admin/tools" -H "X-API-KEY: ${API_KEY}" | jq
+
+# dry-run 预览知识聚类压缩（默认不改数据）
+curl -sS -X POST "${ENDPOINT}/admin/tools/compress_knowledge_cluster/invoke" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project"}' | jq
+
+# 梦境状态 + 手动 dry-run 触发
+curl -sS "${ENDPOINT}/admin/dreaming/status" -H "X-API-KEY: ${API_KEY}" | jq
+curl -sS -X POST "${ENDPOINT}/admin/dreaming/trigger" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" -d '{}' | jq
+
+# 入队一次 agent run（需先 TM_AGENT_ORCHESTRATION_ENABLED=1）→ 看待审批 → 批准执行
+curl -sS -X POST "${ENDPOINT}/admin/agent/dream-orchestrator/invoke" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project","goal":"consolidate duplicate decisions"}' | jq
+curl -sS "${ENDPOINT}/admin/agent/approvals?status=pending" -H "X-API-KEY: ${API_KEY}" | jq
+curl -sS -X POST "${ENDPOINT}/admin/agent/approvals/42/approve" -H "X-API-KEY: ${API_KEY}" | jq
+```
+
+> **安全速记**：① 默认全关/只读，全新部署不自动改数据。② 写/破坏性动作默认 `dry_run=true` 只产 plan。③ 可逆动作 = `dry_run=false` AND `allow_apply=true` 双闸。④ 破坏性 `snapshot_and_quarantine` 永远只进审批队列，`/approve` 端点是唯一人工执行器（且可逆——快照 + 隔离，零硬删）。
 
 ---
 

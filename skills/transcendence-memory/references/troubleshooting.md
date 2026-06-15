@@ -44,6 +44,9 @@
   - [Reranker upstream 返回 400 `model_price_error` / `model_not_found`](#reranker-upstream-返回-400-model_price_error--model_not_found)
   - [`/query` 报 `AssertionError: Embedding dim mismatch, expected: X, but loaded: Y`](#query-报-assertionerror-embedding-dim-mismatch-expected-x-but-loaded-y)
   - [服务拒绝启动：`FATAL: EMBEDDING_DIM=X disagrees with LanceDB schemas`（v0.18 启动闸）](#服务拒绝启动fatal-embedding_dimx-disagrees-with-lancedb-schemasv018-启动闸)
+- [治理 / 梦境（v0.20）](#治理--梦境v020)
+  - [agent run 卡在 pending 审批不前进](#agent-run-卡在-pending-审批不前进)
+  - [compress_knowledge_cluster 大簇分批 / 曾经 400](#compress_knowledge_cluster-大簇分批--曾经-400)
 
 ## 快速诊断
 
@@ -741,3 +744,32 @@ curl -sS -X POST "$GATEWAY/v1/rerank" -H "Authorization: Bearer $KEY" \
 - **确在迁移途中**（明知短暂不一致）才临时 `TM_ALLOW_DIM_DRIFT=1` 跳过这道闸（设后日志打 `TM_ALLOW_DIM_DRIFT=1 set — skipping dim consistency check`）。**别**当常规启动参数挂着——它会让 14h 静默事故重演。
 
 > 这是 **server 端 env**，不在本 skill 的 `config.toml`。skill 侧能做的只是识别这条 FATAL 日志、提示运维去对齐 dim。`EMBEDDING_DIM` 未设时此闸 best-effort 跳过（交由 runtime 内部 profiles 兜底）。
+
+## 治理 / 梦境（v0.20）
+
+> 自治记忆治理子系统（治理工具箱 / 梦境 / 编排 Agent）的排障。子系统总览 + 安全模型见 [`governance.md`](./governance.md)；端点 spec 见 [`api-reference.md`](./api-reference.md#治理与梦境端点v020)。
+
+### agent run 卡在 pending 审批不前进
+
+**症状**：`POST /admin/agent/{name}/invoke` 入队的 run 在 `GET /admin/agent/runs` 里 `status` 不再推进，`GET /admin/agent/approvals?status=pending` 里堆着一条破坏性工具（`snapshot_and_quarantine`）的待审批，没有任何东西自动执行它。
+
+**根因**：**这是设计行为，不是 bug。** 破坏性工具在 agent 循环里**永不自动执行**——模型一旦想 apply 它，循环只记一条 pending 审批就继续/收尾。**人**通过审批端点是唯一执行器，无人值守循环从不自己跑破坏性删除。所以 run「停在 pending」= 安全闸生效，而非死锁。
+
+**处理**：
+- 真要执行 → `POST /admin/agent/approvals/{id}/approve`（人工背书，以记录的 tool+params 真执行 `dry_run=False`；这是 server 唯一破坏性真执行入口）。
+- 不要执行 → `POST /admin/agent/approvals/{id}/reject`。
+- 两端点 **404** = 审批不存在 / 已决 / **已过期**。pending 超过 `config:tools:approval_ttl_days`（默认 30 天）会被存储层隐藏 + 不可再 approve——这时 run 永远不会落地那一步，是预期。要延长有效期改 `PUT /admin/config` 的 `config:tools:approval_ttl_days`。
+- 可逆工具「不落地」同理排查双闸：invoke 时须 `dry_run=false` **AND** `allow_apply=true` 才会自动 apply；任一留默认（`dry_run=true` 或 `allow_apply=false`）整个 run 都停在 plan 模式——这也是预期，不是失败。
+
+### compress_knowledge_cluster 大簇分批 / 曾经 400
+
+**症状**：对一个记忆很多的大容器跑 `POST /admin/tools/compress_knowledge_cluster/invoke`（`dry_run=false`）时，早期版本可能返回 **400**（簇全文超过单次 LLM 请求上限，request-too-large）；现在则看到 result 里出现多张局部索引卡 / 分批账目。
+
+**根因 + 现状**：`compress_knowledge_cluster` 取同主题（同 tags 簇）最大簇压成高密度索引卡。**超大簇会按字节预算分批**——每批单独压成一张局部索引卡，送 LLM 前再经 `_truncate_for_llm` 兜底截断，避免整批超限。早期未分批时大簇会触发 400，**现已修复**（分批 + 截断）。压缩是**附加式不删源**（回滚 = 删掉新增的索引卡行），簇 <2 不压缩（单条无聚合价值）。
+
+**处理 / 调参**：
+- 分批字节预算：`config:agent:compress_batch_bytes`（或 env `TM_COMPRESS_BATCH_BYTES`，默认 8 MiB）。簇极大仍想更稳 → 调小批字节。
+- 单行字符上限：`config:agent:compress_row_char_cap`。
+- 先 `dry_run`（默认）预览会聚类哪个簇 + 簇内来源 + 字节账目（不调 LLM），确认范围再 `dry_run=false` 真执行。
+- 真执行改了记忆主文件 → response `result.reindex_required=true` 会触发 best-effort re-embed（`result.reindex_job`）；re-embed 入队失败只记 warning + notes，不影响压缩结果本身。
+- LLM 经 `rag_engine` 网关（HR-9 `LLM_*`）——若压缩报网关错（5xx / 超时），先查 server 的 `LLM_*` 配置与上游配额，而非这个工具本身。

@@ -14,6 +14,7 @@ Core capabilities:
 - **Text memory**: manage structured memories through lightweight CRUD endpoints
 - **Multimodal RAG**: upload documents (PDF, image, or Markdown) or raw text into the RAG-Anything pipeline, then ask natural-language questions and get LLM-generated answers
 - **Container management**: list and delete containers
+- **Governance (server v0.20)**: runtime config center, a 6-tool governance toolbox (SAFE / LLM / destructive-reversible), a dreaming subsystem (background/manual memory tidy-up), and an opt-in LLM tool-use orchestration agent with human approval — all dry-run-first and off by default. See [`references/governance.md`](./references/governance.md).
 - **Troubleshooting**: diagnose connection and retrieval issues
 
 ## Install
@@ -230,6 +231,18 @@ These have no `/tm` command — call them directly over HTTP (all need auth). Fu
 | `GET /admin/usage/{summary,endpoints,containers,timeseries}` · `POST /admin/usage/cleanup` | Request-usage analytics (call counts / latency / per-container / time buckets) + retention cleanup |
 | `GET /admin/ui` · `POST /admin/ui/{login,logout}` · `GET /admin/ui/me` | Cookie-session admin dashboard SPA (browser-facing; agents rarely call directly) |
 
+### Governance / dreaming / orchestration-agent endpoints (server v0.20, no `/tm` shortcut)
+
+Self-hosted autonomous memory-governance subsystem. **All dry-run-first and safe by default** — a fresh deploy never mutates data on its own. Full request/response schemas in [`references/api-reference.md`](./references/api-reference.md#治理与梦境端点v020);命令速查 in [`references/commands.md`](./references/commands.md#治理--梦境--编排-agentv020); overview + safety model in [`references/governance.md`](./references/governance.md).
+
+| Method + path | Purpose |
+|---|---|
+| `GET /admin/config` · `PUT /admin/config` | Runtime config center — enumerate / batch-write known config keys (hot-reload). Sensitive keys never echo a value (only `configured`). The single place to toggle tools / dreaming schedule / agent limits |
+| `GET /admin/tools` · `POST /admin/tools/{tool}/invoke` | Governance toolbox: matrix of 6 preset tools (SAFE / LLM / destructive-reversible) + per-container enable map; invoke one (`dry_run=true` default; SAFE always real, LLM/destructive need `dry_run=false`) |
+| `GET /admin/dreaming/status` · `POST /admin/dreaming/trigger` | Dreaming subsystem: background/manual memory tidy-up cycle. Trigger is report-only by default; real deletes additionally gated by `config:dreaming:prune_apply` |
+| `POST /admin/agent/{name}/invoke` · `GET /admin/agent/runs` | LLM tool-use orchestration agent (opt-in behind `TM_AGENT_ORCHESTRATION_ENABLED`, default OFF). Reversible tools apply only when `dry_run=false` AND `allow_apply=true` |
+| `GET /admin/agent/approvals` · `POST …/{id}/approve` · `POST …/{id}/reject` | Human approval queue — `/approve` is the **only** place a destructive governance tool runs for real; the unattended loop never executes destructive tools itself |
+
 ## Gotchas — 最常踩的坑（写新代码前先扫一遍）
 
 | 症状 | 真因 | 修复 |
@@ -277,6 +290,7 @@ To verify connectivity afterwards, prefer `bash scripts/tm-search.sh status` (a 
 | First-time setup (token decode, config.toml, verify) | [`references/setup.md`](./references/setup.md) | First use only |
 | Full HTTP API (request / response / error schemas, field-alias table) | [`references/api-reference.md`](./references/api-reference.md) | When you need exact field types |
 | **Per-command curl / options matrix** | [`references/commands.md`](./references/commands.md) | When invoking any `/tm <command>` — full HTTP body, options, response schema |
+| **Governance framework (v0.20)** — toolbox / dreaming / orchestration agent + dry-run-first safety model | [`references/governance.md`](./references/governance.md) | When driving `/admin/config` · `/admin/tools` · `/admin/dreaming/*` · `/admin/agent/*` |
 | Architecture (dual-path model, container isolation, multi-embedding routing) | [`references/ARCHITECTURE.md`](./references/ARCHITECTURE.md) | When understanding how it works internally |
 | Troubleshooting (connect / 401 / 403 / empty search / empty query / cold-start / union degraded / WAF 403) | [`references/troubleshooting.md`](./references/troubleshooting.md) | When something doesn't work |
 | Operations (bulk ingest, persistent queue, automatic memory, platform support, multi-embedding ops) | [`references/OPERATIONS.md`](./references/OPERATIONS.md) | When operating at scale |
@@ -310,6 +324,15 @@ The lifecycle hooks below live at the **plugin/repo root** (`../../hooks/`, one 
 | `hooks/prompt-inject` | UserPromptSubmit hook: recall-keyword / long-prompt triggered memory injection | Plugin install only — auto-registered |
 | `hooks/post-commit-memory` | PostToolUse hook: instruct agent to store git commit summary | Plugin install only — auto-registered |
 | `hooks/session-stop` | Stop hook: auto-store session summary memory | Plugin install only — auto-registered |
+
+## Governance subsystem — server-side env switches (v0.20)
+
+The v0.20 governance toolbox / dreaming / orchestration agent are configured **server-side** — most knobs live in the runtime config center (`config:dreaming:*` / `config:tools:*` / `config:agent:*`, hot-reloaded via `PUT /admin/config`; full list with defaults in [`references/governance.md`](./references/governance.md) §5). The orchestration **agent has one master env gate**:
+
+- `TM_AGENT_ORCHESTRATION_ENABLED` — default `0` (OFF). When off, `POST /admin/agent/{name}/invoke` returns `status:"disabled"` and never enqueues, so a default deploy runs no autonomous loop. Set `1` (server `.env`) to allow agent runs.
+- `TM_AGENT_MAX_STEPS` (default 6) / `TM_AGENT_RUN_TIMEOUT_SEC` (default 300) / `TM_AGENT_DAILY_TOKEN_BUDGET` (blank = no extra cap) bound each run; env wins over the matching `config:agent:*` key.
+
+These are **server `.env` concerns**, not this skill's `config.toml` — the skill only *calls* the endpoints. LLM routing stays on the sanctioned gateway (HR-9, `LLM_*`); no new model env is introduced.
 
 ## When NOT to Use
 

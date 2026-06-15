@@ -33,10 +33,12 @@
   - [容器 alias 路由（v0.18）](#容器-alias-路由v018)
   - [GET /admin/usage/*（v0.18）](#get-adminusagev018)
   - [GET /admin/ui/*（v0.18）](#get-adminuiv018)
+- [治理与梦境端点（v0.20）](#治理与梦境端点v020)
 - [Multi-Model 端点（v0.7.0+）](#multi-model-端点v070)
 - [读取配置的辅助方法](#读取配置的辅助方法)
 
 > 每条命令的最小 curl / 选项速查见 [`commands.md`](./commands.md)；排障见 [`troubleshooting.md`](./troubleshooting.md)。
+> 治理 / 梦境 / 编排 Agent 子系统的总览与安全模型见 [`governance.md`](./governance.md)。
 
 ---
 
@@ -711,6 +713,155 @@ curl -sS -X POST "${ENDPOINT}/admin/usage/cleanup" \
 ### GET /admin/ui/*（v0.18）
 
 Cookie-session 管理面板（浏览器向；agent 一般用上面的 JSON 端点而非走 UI）。`POST /admin/ui/login`（body `{"password":"..."}` 形态的 `LoginRequest`）签发 HttpOnly + SameSite=Strict 会话 cookie（`TM_ENV=dev` 时关 `Secure` 以便本地 HTTP 调试）；`POST /admin/ui/logout` 清会话；`GET /admin/ui/me` 回当前登录态。POST 路由强制 `X-Requested-With: XMLHttpRequest`（CSRF 防御）。`GET /admin/ui` 及 `GET /admin/ui/{path}` 兜底服务构建好的 React bundle（`/app/static/admin`）。
+
+## 治理与梦境端点（v0.20）
+
+> 服务端 v0.20 自治记忆治理子系统的 HTTP 契约。**全部走统一鉴权**（`X-API-KEY` / `Authorization: Bearer <api-key>` / cookie session 任一）。全部**降级安全**——存储/网关故障返回降级状态而非 5xx。总览 + 安全模型见 [`governance.md`](./governance.md)；命令速查见 [`commands.md`](./commands.md)。
+>
+> 安全骨架：**dry-run-first → 可逆动作需 `dry_run=false` AND `allow_apply=true` 双闸 → 破坏性动作永远只进审批队列**。默认部署（调度 OFF、`TM_AGENT_ORCHESTRATION_ENABLED=0`、`prune_apply=false`）不自动改任何数据。
+
+### GET /admin/config · PUT /admin/config（v0.20）
+
+运行时配置中心。`GET` 枚举全部已知键（`KNOWN_CONFIG`）的有效值 / 是否被覆盖 / 默认值；`PUT` 单条或批量写覆盖（逐键经 `config_store.set`，热重载广播）。
+
+**脱敏铁律**：敏感键（`config:model:api_keys:*`）`value` 恒 `null`，仅 `configured:bool` 表示是否已配置——真值从不读回。
+
+```bash
+# 列全部配置
+curl -sS "${ENDPOINT}/admin/config" -H "X-API-KEY: ${API_KEY}" | jq
+
+# 批量写（开梦境后台调度 + 关某工具）
+curl -sS -X PUT "${ENDPOINT}/admin/config" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"updates":[
+        {"key":"config:dreaming:scheduler_enabled","value":true},
+        {"key":"config:tools:global_enabled_map","value":{"snapshot_and_quarantine":false}}
+      ]}' | jq
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `GET` → `items[]` | `ConfigItem[]` | `{key, module, type, value, is_override, default, configured, group, label, description}`；`value` 为有效值（override 优先，否则 `default`），敏感键恒 null |
+| `GET` → `count` | int | 已知键总数 |
+| `PUT` body `updates[]` | `{key, value}[]` | `value=null` 清除该键覆盖回默认；至少 1 条 |
+| `PUT` → `results[]` | `{key, ok, rejected_reason}[]` | `ok=false` 时 `rejected_reason` ∈ `unknown_key` / `rejected_base_url_host`（HR-9 主机锁）/ `invalid_value_or_persist_failed`（不回显可能敏感的 value） |
+| `PUT` → `applied` / `rejected` | int | 成功 / 失败计数 |
+
+> 治理相关可写键全集（dreaming / tools / agent 共 19 个，含默认值）见 [`governance.md`](./governance.md) §5。改工具开关 / 梦境调度 / agent 步数都走这里，**不旁路** config_store 的校验（known-key allowlist + HR-9 base_url 主机锁 + 类型 coerce + 敏感键加密 write-only）。
+
+### GET /admin/tools · POST /admin/tools/{tool}/invoke（v0.20）
+
+治理工具箱矩阵 + 单工具调用。6 个预设工具 + 三档风险（SAFE / LLM / 破坏性可逆），详见 [`governance.md`](./governance.md) §2。
+
+```bash
+# 看工具矩阵（全局开关 + 各容器 resolved/raw 开关）
+curl -sS "${ENDPOINT}/admin/tools" -H "X-API-KEY: ${API_KEY}" | jq
+
+# dry-run 预览一次知识聚类压缩（默认 dry_run=true，不改数据）
+curl -sS -X POST "${ENDPOINT}/admin/tools/compress_knowledge_cluster/invoke" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project"}' | jq
+
+# 真执行（显式 dry_run=false；LLM 经 rag_engine 网关，附加式不删源）
+curl -sS -X POST "${ENDPOINT}/admin/tools/compress_knowledge_cluster/invoke" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project","dry_run":false}' | jq
+```
+
+`GET /admin/tools` 响应（`ToolsListResponse`）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `global_enabled_map` | `dict[str,bool]` | 各工具全局开关（默认全 ON） |
+| `sandbox_mem_limit` | str | 工具沙箱内存上限（默认 `512m`） |
+| `approval_ttl_days` | int | 审批有效期（默认 30 天） |
+| `new_tool_default_enabled` | bool | 表外新工具默认开关（默认 false） |
+| `tools[]` | `{name, scope, description}[]` | 6 个预设工具静态描述 |
+| `containers[]` | `{container, resolved_map, raw_map}[]` | `resolved_map`=容器有效开关（容器覆盖叠加全局）；`raw_map`=容器自身覆盖（无覆盖 = null，完全继承全局） |
+
+`POST /admin/tools/{tool}/invoke` 请求 `ToolInvokeRequest`：`{container?:str, params?:dict, dry_run?:bool=true}`。响应 `ToolInvokeResponse`：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `tool` | str | 工具名 |
+| `status` | enum | `ok` / `disabled`（开关关）/ `dry_run`（预览）/ `error` / `deferred` / `applied` |
+| `container` | str\|null | 作用容器 |
+| `result` | dict | 工具产物 / plan；真执行改了记忆主文件时 `result.reindex_required=true` 会触发 best-effort re-embed（`result.reindex_job={job_id,status}`） |
+| `applied` | bool | 是否真落地了改动 |
+| `notes` | str | 备注 / 指引（如 `pass dry_run=false to execute`） |
+
+**dry_run 语义**：SAFE 工具（`manage_token_quotas` / `analyze_retrieval_latency` 只读；`update_container_routing` 加性写）**总是真执行**；LLM / 破坏性工具默认 `dry_run=true` 只产 plan 预览，显式 `dry_run=false` 才真执行。破坏性 `snapshot_and_quarantine` 经此端点 `dry_run=false` 可直接真执行（运维手动操作）——但在 **agent 循环里它永不自动执行**，只进审批队列（见下）。
+
+### GET /admin/dreaming/status · POST /admin/dreaming/trigger（v0.20）
+
+梦境子系统（后台/手动记忆整理周期）。详见 [`governance.md`](./governance.md) §3。
+
+```bash
+# 状态（全局开关 / 调度配置与实际运行态 / cron / 各容器解析配置 / 最近报告）
+curl -sS "${ENDPOINT}/admin/dreaming/status" -H "X-API-KEY: ${API_KEY}" | jq
+
+# 手动触发一次（dry_run 默认 true = 仅产候选报告不删）
+curl -sS -X POST "${ENDPOINT}/admin/dreaming/trigger" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project"}' | jq
+```
+
+`GET …/status`（`DreamStatusResponse`）：`{global_enabled, scheduler_enabled, scheduler_running, trigger_cron, batch_model, last_report:DreamReport|null, containers:[{container, enabled, cron, model}]}`。
+
+`POST …/trigger` 请求：`{container?:str (null=所有启用容器), dry_run?:bool=true}`。响应 `DreamReport`：`{status('ok'|'skipped_global_disabled'), started_at, finished_at, container_scope, dry_run, excluded_from_rag(恒 true), actions:[{tool, container, summary, candidates, applied}], notes}`。
+
+> **破坏性二次守护**：`dry_run` 默认 true = report-only。即便 `dry_run=false`，真删除**仍**受 `config:dreaming:prune_apply`（默认 false）二次守护——单凭这个请求体永远删不掉数据。总闸 `config:dreaming:global_enabled` 关时返回 `status:"skipped_global_disabled"` 不执行。
+
+### POST /admin/agent/{name}/invoke · GET /admin/agent/runs（v0.20）
+
+治理编排 Agent（网关 LLM tool-use 循环）。**opt-in，默认 OFF**：`TM_AGENT_ORCHESTRATION_ENABLED=0` 时 invoke 返回 `status:"disabled"` 不入队。详见 [`governance.md`](./governance.md) §4。
+
+```bash
+# 入队一次 agent run（dry_run 默认 true = 全程 plan，不落地）
+curl -sS -X POST "${ENDPOINT}/admin/agent/dream-orchestrator/invoke" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project","goal":"consolidate duplicate decision memories"}' | jq
+
+# 允许可逆工具落地（须同时 dry_run=false 且 allow_apply=true）
+curl -sS -X POST "${ENDPOINT}/admin/agent/dream-orchestrator/invoke" \
+  -H "X-API-KEY: ${API_KEY}" -H "Content-Type: application/json" \
+  -d '{"container":"my-project","goal":"...","dry_run":false,"allow_apply":true}' | jq
+
+# 历史 run（newest first）
+curl -sS "${ENDPOINT}/admin/agent/runs?limit=20" -H "X-API-KEY: ${API_KEY}" | jq
+```
+
+`POST …/invoke` 请求 `AgentInvokeRequest`：`{container?:str (null=全局), goal?:str, params?:dict, dry_run?:bool=true, allow_apply?:bool=false}`。响应 `AgentInvokeResponse`：`{agent_name, run_id, job_id?, status('enqueued'|'disabled'|'error'), container, dry_run, allow_apply, notes}`。
+
+> **apply 双闸**：服务端 `effective_allow_apply = allow_apply AND NOT dry_run`——任一闸留安全默认，整个 run 停在 plan。可逆工具仅在双闸全开时自动落地；**破坏性工具（`snapshot_and_quarantine`）任何情况只进审批队列**，由人在 approve 端点执行。
+
+`GET …/runs?limit=50` → `{runs:[{run_id, agent_name, container, created_at, status, dry_run, proposals, job_id}]}`（读隔离 governance store；不可用时降级空表）。
+
+### GET /admin/agent/approvals · approve / reject（v0.20）
+
+破坏性提案的人工审批队列。**`/approve` 是整个 server 唯一一处破坏性治理工具以 `dry_run=False` 真执行的地方**——人（鉴权背后）是唯一执行器，无人值守循环从不自己跑破坏性工具。
+
+```bash
+# 列 pending 审批（默认 status=pending；过期的被存储层隐藏）
+curl -sS "${ENDPOINT}/admin/agent/approvals?status=pending&limit=50" \
+  -H "X-API-KEY: ${API_KEY}" | jq
+
+# 批准并真执行（记录的工具 + 记录的 params，dry_run=False）
+curl -sS -X POST "${ENDPOINT}/admin/agent/approvals/42/approve" \
+  -H "X-API-KEY: ${API_KEY}" | jq
+
+# 拒绝（不执行）
+curl -sS -X POST "${ENDPOINT}/admin/agent/approvals/42/reject" \
+  -H "X-API-KEY: ${API_KEY}" | jq
+```
+
+| 端点 | 响应 | 说明 |
+|---|---|---|
+| `GET /admin/agent/approvals?status=&limit=` | `{approvals:[{id, run_id, agent_name, container, tool, status, created_at}]}` | 按 status 过滤（默认 pending）；TTL（`config:tools:approval_ttl_days`，默认 30 天）过期 pending 被隐藏 |
+| `POST …/{id}/approve` | `ToolInvokeResponse` | pending→approved 后以记录的 tool+params 真执行（`dry_run=False`）；reindex 时复用 re-embed 路径；**404** = 不存在/已决/已过期 |
+| `POST …/{id}/reject` | `AgentApprovalInfo`（decided row） | 仅置 rejected，不执行；**404** = 不存在/已决/已过期 |
+
+> approve/reject 会记审计者标签（session api-key hash 前缀，否则 client IP）。`approve` 的执行结果与直接 `/admin/tools/{tool}/invoke` `dry_run=false` 同形（`ToolInvokeResponse`），破坏性工具的可逆语义（快照 + 隔离、零硬删）不变。
 
 ## Multi-Model 端点（v0.7.0+）
 
