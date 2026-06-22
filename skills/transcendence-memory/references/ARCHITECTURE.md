@@ -31,7 +31,7 @@
 │      ├── /query (RAG 查询 → LLM 答案)           │
 │      ├── RAG-Anything pipeline                   │
 │      │   ├── VLM: qwen3-vl-plus (视觉理解)      │
-│      │   ├── LLM: gemini-2.5-flash (生成答案)    │
+│      │   ├── LLM: gemini-3.1-flash-lite-preview (生成答案)    │
 │      │   └── Embedding: gemini-embedding-001     │
 │      └── 知识图谱存储                            │
 └──────────────────────────────────────────────────┘
@@ -104,7 +104,7 @@ Server 不再绑死单一 embedding 模型。所有 embedding / reranker profile
 | Embedding (default) | gemini-embedding-001 | 3072 | 双轨默认 |
 | Embedding (alt) | text-embedding-3-small | 1024 | `*_openai` 命名走这条 |
 | Reranker | text-reranker (Cohere-compatible) | — | 默认配但不开，per-call 启用 |
-| LLM | gemini-2.5-flash | — | `/query` 答案生成 |
+| LLM | gemini-3.1-flash-lite-preview | — | `/query` 答案生成 |
 | VLM | qwen3-vl-plus | — | 图片/PDF 视觉理解 |
 
 所有 profile 在 server 端配置，通过统一 OpenAI-compatible API endpoint 调用。
