@@ -124,7 +124,7 @@ api_key = "sk-xxx"                       # API 密钥
 |---------|---------|------|
 | Embedding (default) | gemini-embedding-001 (dim=3072) | 文本向量化（双轨默认）|
 | Embedding (alt) | text-embedding-3-small (dim=1024) | `*_openai` 命名的 container 走这条 |
-| LLM | gemini-2.5-flash | `/query` 生成答案 |
+| LLM | gemini-3.1-flash-lite-preview | `/query` 生成答案 |
 | VLM | qwen3-vl-plus | 图片/PDF 视觉理解 |
 
 LLM/VLM 仍由 `.env` 中 `LLM_MODEL` / `LLM_BASE_URL` / `VLM_*` 变量驱动；
