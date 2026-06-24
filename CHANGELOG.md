@@ -5,6 +5,21 @@ All notable changes to this skill plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows semantic versioning.
 
+## v0.8.1 — 2026-06-24
+
+Fixes Codex plugin-hook compatibility for the published plugin package.
+
+### Changed
+
+- **`hooks/hooks.json` Stop hook downgraded to sync compatibility**:
+  `async: true` is now `async: false`. Current Codex releases parse `async` but
+  skip handlers with `async: true`, which produced the startup warning
+  `async hooks are not supported yet` and disabled the bundled session-summary
+  stop hook for Codex users. The hook still runs; it just no longer requests an
+  unsupported async execution mode.
+- **plugin package version bumped**: `.claude-plugin/plugin.json` and
+  `.claude-plugin/marketplace.json` now publish `0.8.1`.
+
 ## v0.8.0 — 2026-06-16
 
 Aligns the skill docs with server **v0.21.0**. The governance subsystem (6-tool

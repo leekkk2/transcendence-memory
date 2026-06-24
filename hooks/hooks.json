@@ -39,7 +39,7 @@
           {
             "type": "command",
             "command": "[ -f \"$HOME/.transcendence-memory/auto-memory.enabled\" ] && [ -f \"$HOME/.transcendence-memory/config.toml\" ] && \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-stop || true",
-            "async": true
+            "async": false
           }
         ]
       }
