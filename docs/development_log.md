@@ -7,3 +7,4 @@
 - [2026-07-05 11:49:10] Add notes on token limit management
 - [2026-07-06 14:56:30] Revise the contribution guidelines
 - [2026-07-07 12:30:06] Refine the memory compression algorithms explanation
+- [2026-07-08 19:09:48] Revise the contribution guidelines
