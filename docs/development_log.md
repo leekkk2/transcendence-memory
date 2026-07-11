@@ -10,3 +10,4 @@
 - [2026-07-08 19:09:48] Revise the contribution guidelines
 - [2026-07-09 20:42:07] Update memory architecture overview
 - [2026-07-10 19:39:20] Refine context window optimization guide
+- [2026-07-11 20:56:36] Document the new caching invalidation rules
