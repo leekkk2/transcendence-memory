@@ -16,3 +16,4 @@
 - [2026-07-14 13:24:32] Refine the instructions for local development setup
 - [2026-07-15 19:11:09] Draft initial proposal for multi-agent support
 - [2026-07-16 11:31:59] Expand the plugin development tutorial
+- [2026-07-17 15:03:50] Clarify the role of the orchestrator agent
