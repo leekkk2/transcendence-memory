@@ -18,3 +18,4 @@
 - [2026-07-16 11:31:59] Expand the plugin development tutorial
 - [2026-07-17 15:03:50] Clarify the role of the orchestrator agent
 - [2026-07-18 18:34:26] Add more examples for the memory hook system
+- [2026-07-19 16:33:17] Document the migration steps for v0.20
