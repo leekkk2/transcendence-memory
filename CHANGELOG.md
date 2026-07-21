@@ -178,3 +178,4 @@ operational endpoints). No behavioral change to the skill itself — docs only.
 ## v0.4.0 — earlier
 
 - Async ingestion silent-mode for KG-write endpoints; job ledger sweep.
+
