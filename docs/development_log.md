@@ -21,3 +21,4 @@
 - [2026-07-19 16:33:17] Document the migration steps for v0.20
 - [2026-07-20 14:57:13] Fix formatting issues in api reference
 - [2026-07-21 22:12:50] Update sequence diagrams for memory injection
+- [2026-07-22 17:17:08] Update configuration examples for production
