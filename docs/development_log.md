@@ -22,3 +22,4 @@
 - [2026-07-20 14:57:13] Fix formatting issues in api reference
 - [2026-07-21 22:12:50] Update sequence diagrams for memory injection
 - [2026-07-22 17:17:08] Update configuration examples for production
+- [2026-07-23 09:51:43] Fix typos in deployment guide
