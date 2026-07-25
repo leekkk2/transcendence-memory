@@ -24,3 +24,4 @@
 - [2026-07-22 17:17:08] Update configuration examples for production
 - [2026-07-23 09:51:43] Fix typos in deployment guide
 - [2026-07-24 19:33:55] Draft initial proposal for multi-agent support
+- [2026-07-25 10:51:49] Add faq section for common errors
