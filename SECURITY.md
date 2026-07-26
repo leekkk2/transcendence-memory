@@ -51,3 +51,4 @@ This skill has **zero external dependencies**. All scripts use only:
 - `curl` (system utility)
 
 No packages are installed, no `node_modules` or `pip install` required.
+
