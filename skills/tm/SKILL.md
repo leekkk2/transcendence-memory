@@ -67,3 +67,4 @@ If the canonical SKILL.md changes, this alias does **not** need editing — it a
 ## Do not duplicate state
 
 Do not write a separate `config.toml`, do not call distinct endpoints, do not maintain a parallel command map. This file is intentionally thin to avoid drift.
+
