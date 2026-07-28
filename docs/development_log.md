@@ -27,3 +27,4 @@
 - [2026-07-25 10:51:49] Add faq section for common errors
 - [2026-07-26 19:14:55] Update the continuous integration pipeline docs
 - [2026-07-27 20:51:52] Clean up stale documentation in memory modules
+- [2026-07-28 21:50:38] Update memory architecture overview
