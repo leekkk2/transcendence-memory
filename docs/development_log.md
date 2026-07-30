@@ -29,3 +29,4 @@
 - [2026-07-27 20:51:52] Clean up stale documentation in memory modules
 - [2026-07-28 21:50:38] Update memory architecture overview
 - [2026-07-29 15:56:49] Add a section on semantic search tuning
+- [2026-07-30 20:20:26] Update configuration examples for production
