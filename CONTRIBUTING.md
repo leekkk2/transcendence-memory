@@ -70,3 +70,4 @@ outside the repo). The script itself contains no business-specific terms.
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License (see `LICENSE`).
+
