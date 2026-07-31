@@ -30,3 +30,4 @@
 - [2026-07-28 21:50:38] Update memory architecture overview
 - [2026-07-29 15:56:49] Add a section on semantic search tuning
 - [2026-07-30 20:20:26] Update configuration examples for production
+- [2026-07-31 10:42:37] Expand on vector database considerations
