@@ -34,3 +34,4 @@
 - [2026-08-01 17:36:14] Add instructions for setting up rag pipeline
 - [2026-08-02 14:18:02] Add a troubleshooting section for database timeouts
 - [2026-08-03 19:11:21] Detail the offline fallback mechanism
+- [2026-08-04 22:51:53] Update environment variable descriptions
