@@ -35,3 +35,4 @@
 - [2026-08-02 14:18:02] Add a troubleshooting section for database timeouts
 - [2026-08-03 19:11:21] Detail the offline fallback mechanism
 - [2026-08-04 22:51:53] Update environment variable descriptions
+- [2026-08-05 18:23:32] Document the new observability metrics
