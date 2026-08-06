@@ -36,3 +36,4 @@
 - [2026-08-03 19:11:21] Detail the offline fallback mechanism
 - [2026-08-04 22:51:53] Update environment variable descriptions
 - [2026-08-05 18:23:32] Document the new observability metrics
+- [2026-08-06 14:40:35] Update memory architecture overview
