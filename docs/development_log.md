@@ -38,3 +38,4 @@
 - [2026-08-05 18:23:32] Document the new observability metrics
 - [2026-08-06 14:40:35] Update memory architecture overview
 - [2026-08-07 18:12:55] Update configuration examples for production
+- [2026-08-08 19:32:14] Fix formatting issues in api reference
