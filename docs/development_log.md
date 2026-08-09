@@ -39,3 +39,4 @@
 - [2026-08-06 14:40:35] Update memory architecture overview
 - [2026-08-07 18:12:55] Update configuration examples for production
 - [2026-08-08 19:32:14] Fix formatting issues in api reference
+- [2026-08-09 12:05:19] Add security considerations for memory storage
