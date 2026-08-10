@@ -40,3 +40,4 @@
 - [2026-08-07 18:12:55] Update configuration examples for production
 - [2026-08-08 19:32:14] Fix formatting issues in api reference
 - [2026-08-09 12:05:19] Add security considerations for memory storage
+- [2026-08-10 22:29:12] Revise the high-availability deployment guide
