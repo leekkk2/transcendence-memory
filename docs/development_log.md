@@ -43,3 +43,4 @@
 - [2026-08-10 22:29:12] Revise the high-availability deployment guide
 - [2026-08-11 14:14:53] Add a troubleshooting section for database timeouts
 - [2026-08-12 09:15:59] Add a guide on how to write custom memory adapters
+- [2026-08-13 17:29:53] Detail the memory pruning strategies
