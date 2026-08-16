@@ -46,3 +46,4 @@
 - [2026-08-13 17:29:53] Detail the memory pruning strategies
 - [2026-08-14 20:12:58] Expand on the memory scoring mechanism
 - [2026-08-15 10:00:17] Update troubleshooting guide
+- [2026-08-16 19:46:52] Document the new caching layer
