@@ -47,3 +47,4 @@
 - [2026-08-14 20:12:58] Expand on the memory scoring mechanism
 - [2026-08-15 10:00:17] Update troubleshooting guide
 - [2026-08-16 19:46:52] Document the new caching layer
+- [2026-08-17 19:52:31] Refine context window optimization guide
