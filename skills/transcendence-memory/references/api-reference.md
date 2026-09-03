@@ -514,37 +514,62 @@ curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}" \
 }
 ```
 
-### POST /containers/{name}/rename · PUT /containers/{name}/rename
+### POST /containers
 
-物理重命名指定 canonical 容器。
+显式创建新容器：系统自动为其分配一个固定不可变的全局唯一 ID（`cnt_xxxxxx`），并将人类可读的 `name` 绑定为主别名（Primary Alias）。
 
-- **入参**：`{"new_name": "<new_canonical_name>"}`
-- **校验规则**：
-  - 必须为 canonical 容器名（禁止通过 alias 改名，避免副作用）；
-  - `new_name` 必须符合容器命名规则（仅支持字母、数字、下划线、中划线，长度 1-64）；
-  - 目标容器名若已存在则拒绝（409 Conflict）；
-  - 容器当前若正在进行后台索引（indexing）则拒绝（409 Conflict）。
-- **同步迁移与副作用**：
-  - 物理目录：原子移动 `tasks/rag/containers/<old_name>` 至 `<new_name>`；
-  - 元数据：自动迁移对应 `container_metadata`；
-  - 别名表：自动将所有原指向 `old_name` 的 alias 重定向至 `new_name`。
+- **入参**：
+  ```json
+  {
+    "name": "my-project",
+    "id": "optional-custom-id",
+    "description": "Optional description",
+    "tags": ["prod", "backend"]
+  }
+  ```
+- **防冲突规则**：
+  - 若 `name` 已被其他容器作为活跃别名占用，立即返回 `409 Conflict`，杜绝命名撞车。
+- **响应示例**：
+  ```json
+  {
+    "id": "cnt_7f8a9b1c2d3e",
+    "name": "my-project",
+    "status": "active",
+    "message": "Container cnt_7f8a9b1c2d3e successfully created with primary alias 'my-project'."
+  }
+  ```
 
-```bash
-curl -sS -X POST "${ENDPOINT}/containers/${OLD_NAME}/rename" \
-  -H "X-API-KEY: ${API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"new_name": "new-container-name"}'
-```
+### POST /containers/{id}/rename · PUT /containers/{id}/rename
 
-响应示例：
-```json
-{
-  "old_name": "old-container-name",
-  "new_name": "new-container-name",
-  "renamed": true,
-  "message": "Container old-container-name successfully renamed to new-container-name."
-}
-```
+通过容器的固定不可变 ID（或当前生效的名称）修改容器的显示别名（Name）。
+
+- **设计原理（最佳实践）**：
+  - **不可变底层 ID**：底层数据物理目录（LanceDB、`memory_objects.jsonl`）始终以分配的固定 `id` 存放，改名时**无需移动物理文件，零 IO 风险，零数据损坏可能**。
+  - **防同名冲突机制**：如果请求的 `new_name` 已被其他容器占用，立即返回 `409 Conflict`，彻底避免同名冲突。
+  - **平滑过渡**：旧名称会自动降级为 `deprecated` 别名继续透传给底层 ID，保证老客户端或历史引用不中断。
+- **入参**：
+  ```json
+  {
+    "new_name": "new-project-alias"
+  }
+  ```
+- **请求示例**：
+  ```bash
+  curl -sS -X POST "${ENDPOINT}/containers/${CONTAINER_ID}/rename" \
+    -H "X-API-KEY: ${API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d '{"new_name": "new-project-alias"}'
+  ```
+- **响应示例**：
+  ```json
+  {
+    "id": "cnt_7f8a9b1c2d3e",
+    "old_name": "my-project",
+    "new_name": "new-project-alias",
+    "renamed": true,
+    "message": "Container cnt_7f8a9b1c2d3e primary name successfully updated to 'new-project-alias'."
+  }
+  ```
 
 ### GET /export-connection-token
 
