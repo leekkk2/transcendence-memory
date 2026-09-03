@@ -311,8 +311,52 @@ main() {
     container="home"
   fi
 
-  # $RANDOM suffix: two stores within the same second must not collide on id.
-  [[ -z "$mem_id" ]] && mem_id="mem-$(date +%s)-$RANDOM"
+derive_semantic_id() {
+  local t="$1" tags="$2" txt="$3"
+  python3 - <<'PY' "$t" "$tags" "$txt"
+import sys, re, datetime, random
+
+title, tags, text = sys.argv[1:4]
+slug_parts = []
+
+def clean_tokens(s):
+    # Extract alphanumeric words, skip common English stop words
+    stop = {'the', 'and', 'for', 'with', 'from', 'this', 'that', 'what', 'when', 'how', 'about', 'into', 'over', 'after'}
+    return [w.lower() for w in re.findall(r'[a-zA-Z0-9]+', s) if len(w) >= 2 and w.lower() not in stop]
+
+if title:
+    tokens = clean_tokens(title)
+    if tokens:
+        slug_parts.extend(tokens[:4])
+
+if len(slug_parts) < 2 and tags:
+    for tag in tags.split(','):
+        t_tokens = clean_tokens(tag)
+        if t_tokens:
+            slug_parts.extend(t_tokens[:2])
+        if len(slug_parts) >= 3:
+            break
+
+if not slug_parts and text:
+    tokens = clean_tokens(text)
+    if tokens:
+        slug_parts.extend(tokens[:3])
+
+date_str = datetime.date.today().strftime('%Y%m%d')
+rand_suffix = f"{random.randint(100, 999)}"
+
+if slug_parts:
+    base_slug = "-".join(slug_parts)[:40].strip('-')
+    print(f"{base_slug}-{date_str}-{rand_suffix}")
+else:
+    print(f"mem-{date_str}-{random.randint(1000, 9999)}")
+PY
+}
+
+  # Generate semantic slug id if not explicitly provided (replaces opaque timestamp id)
+  if [[ -z "$mem_id" ]]; then
+    mem_id="$(derive_semantic_id "$title" "$tags_csv" "$text")"
+  fi
 
   # Redact BEFORE the payload exists anywhere — secrets never reach the wire.
   text="$(printf '%s' "$text" | redact_secrets)"

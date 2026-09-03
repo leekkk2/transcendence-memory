@@ -129,6 +129,16 @@ Tags: deploy, docker, port-conflict, 部署, 端口冲突
 
 See `references/best-practices.<lang>.md` §9 for the full redaction checklist.
 
+### 5. Semantic Memory ID (主动提炼语义化关键词 ID)
+
+记忆存储时，**严禁使用无意义的时间戳/随机字符串**（如 `mem-1788444306-4556`）。
+AI 在调用记忆命令时，**必须主动从该条记忆的决策、实体与动作中提炼 2~4 个关键词**，作为语义化 ID：
+- **格式要求**：`--id <topic>-<action>-<date>`（小写 kebab-case，如 `--id redis-port-conflict-20260903`）。
+- **自动化兜底**：`tm-remember.sh` 会在未指定 `--id` 时自动从 `--title` 和 `--tags` 提炼语义 slug，但 AI **应显式主动提炼并传入 `--id`**，确保 ID 的语义准确度和全局可溯源性。
+- **示例**：
+  - ✅ 好：`bash scripts/tm-remember.sh "..." --title "..." --tags "..." --id "alishell-proxy-timeout-fix-20260903"`
+  - ❌ 坏：省略 `--id` 导致回退到随机时间戳 `mem-1788444306-4556`。
+
 ## AI Behavior — `/tm` is a slash command, not a bare shell binary (STRICT)
 
 `/tm` is a Claude Code **slash command** invoked through the `SlashCommand` tool.
