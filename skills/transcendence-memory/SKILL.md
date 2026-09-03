@@ -129,15 +129,20 @@ Tags: deploy, docker, port-conflict, 部署, 端口冲突
 
 See `references/best-practices.<lang>.md` §9 for the full redaction checklist.
 
-### 5. Semantic Memory ID (主动提炼语义化关键词 ID)
+### 5. Tag-Driven Semantic Memory (采用人类可读的标签 tags 与标题，告别 Memory ID)
 
-记忆存储时，**严禁使用无意义的时间戳/随机字符串**（如 `mem-1788444306-4556`）。
-AI 在调用记忆命令时，**必须主动从该条记忆的决策、实体与动作中提炼 2~4 个关键词**，作为语义化 ID：
-- **格式要求**：`--id <topic>-<action>-<date>`（小写 kebab-case，如 `--id redis-port-conflict-20260903`）。
-- **自动化兜底**：`tm-remember.sh` 会在未指定 `--id` 时自动从 `--title` 和 `--tags` 提炼语义 slug，但 AI **应显式主动提炼并传入 `--id`**，确保 ID 的语义准确度和全局可溯源性。
-- **示例**：
-  - ✅ 好：`bash scripts/tm-remember.sh "..." --title "..." --tags "..." --id "alishell-proxy-timeout-fix-20260903"`
-  - ❌ 坏：省略 `--id` 导致回退到随机时间戳 `mem-1788444306-4556`。
+在记录记忆时，**彻底摒弃人工设计或管理 Memory ID 的心智负担**：
+- **去 ID 化（No Manual Memory ID）**：严禁向用户暴露或强求使用类似 `mem-xxxx` 的 Memory ID。底层系统会自动从标题、标签和正文中生成不可变的索引指针，调用方**无需且不应显式指定 `--id`**。
+- **标签与标题是第一等公民（Tags & Titles First）**：
+  - **多维语义标签（`--tags`）**：调用时**必须**提炼 3~5 个高区分度、人类完全可读的标签，格式涵盖 `[系统/组件, 动作/事件, 主机/环境, 业务实体]`。
+  - **清晰标题（`--title`）**：用一句话精炼概括决策、根因或操作结论，供人类审查与模糊检索对齐。
+- **标准记录命令范式**：
+  ```bash
+  bash scripts/tm-remember.sh "<详细背景、根因与决策正文>" \
+    --title "Alishell 代理超时导致 Claude-Mem 观察停滞根因与修复" \
+    --tags "claudemem,proxy,alishell,mihomo,newapi"
+  ```
+  系统将自动将记忆归档于当前主容器（默认为 `main`），无需关心内部 ID。
 
 ## AI Behavior — `/tm` is a slash command, not a bare shell binary (STRICT)
 

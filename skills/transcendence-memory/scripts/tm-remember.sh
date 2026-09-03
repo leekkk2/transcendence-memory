@@ -393,7 +393,10 @@ PY
   else
     local embed_state="skipped"
     [[ "$auto_embed" == "true" ]] && embed_state="queued"
-    printf 'stored id=%s container=%s embed=%s\n' "$mem_id" "$container" "$embed_state"
+    local disp_title="${title:-${text:0:36}...}"
+    local disp_tags="${tags_csv:-none}"
+    printf 'stored: container=%s title="%s" tags=[%s] embed=%s (id=%s)\n' \
+      "$container" "$disp_title" "$disp_tags" "$embed_state" "$mem_id"
   fi
 }
 
