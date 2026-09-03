@@ -505,9 +505,45 @@ curl -sS -X DELETE "${ENDPOINT}/containers/${CONTAINER}" \
   -H "X-API-KEY: ${API_KEY}"
 ```
 
+响应：
+```json
+{
+  "container": "my-project",
+  "deleted": true,
+  "message": "Container my-project deleted."
+}
+```
+
+### POST /containers/{name}/rename · PUT /containers/{name}/rename
+
+物理重命名指定 canonical 容器。
+
+- **入参**：`{"new_name": "<new_canonical_name>"}`
+- **校验规则**：
+  - 必须为 canonical 容器名（禁止通过 alias 改名，避免副作用）；
+  - `new_name` 必须符合容器命名规则（仅支持字母、数字、下划线、中划线，长度 1-64）；
+  - 目标容器名若已存在则拒绝（409 Conflict）；
+  - 容器当前若正在进行后台索引（indexing）则拒绝（409 Conflict）。
+- **同步迁移与副作用**：
+  - 物理目录：原子移动 `tasks/rag/containers/<old_name>` 至 `<new_name>`；
+  - 元数据：自动迁移对应 `container_metadata`；
+  - 别名表：自动将所有原指向 `old_name` 的 alias 重定向至 `new_name`。
+
+```bash
+curl -sS -X POST "${ENDPOINT}/containers/${OLD_NAME}/rename" \
+  -H "X-API-KEY: ${API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"new_name": "new-container-name"}'
+```
+
 响应示例：
 ```json
-{"status": "deleted", "container": "home"}
+{
+  "old_name": "old-container-name",
+  "new_name": "new-container-name",
+  "renamed": true,
+  "message": "Container old-container-name successfully renamed to new-container-name."
+}
 ```
 
 ### GET /export-connection-token
