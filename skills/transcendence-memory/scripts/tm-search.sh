@@ -674,6 +674,28 @@ cmd_jobs() {
   fi
 }
 
+cmd_errors() {
+  local window="24h" category="other" json_out=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json) json_out=1; shift ;;
+      --window) window="${2:-}"; shift 2 ;;
+      --category) category="${2:-}"; shift 2 ;;
+      *) err "unknown errors argument: $1"; exit "$EX_USAGE" ;;
+    esac
+  done
+  [[ "$window" =~ ^(1h|24h|7d|30d)$ ]] || { err "invalid window"; exit "$EX_USAGE"; }
+  [[ "$category" =~ ^(all|other|authenticated|unauthenticated_404)$ ]] || { err "invalid category"; exit "$EX_USAGE"; }
+  load_config
+  http_get_auth "$ENDPOINT/admin/usage/errors?window=$window&category=$category&limit=50" "$ADMIN_MAX_TIME"
+  if [[ "$LAST_CURL_RC" -ne 0 || ! "$LAST_HTTP" =~ ^2 ]]; then
+    classify_and_exit "$LAST_CURL_RC" "$LAST_HTTP" "$LAST_BODY"
+  fi
+  if [[ "$json_out" -eq 1 ]]; then printf '%s\n' "$LAST_BODY"; else
+    jq -r '"errors: \(.total) | window: \(.window) | category: \(.category)", (.rows[] | "\(.status) \(.method) \(.path) [\(.container // "-")] request=\(.request_id // "historical")\n  \(.error_detail // "Historical response body not recorded")")' <<<"$LAST_BODY"
+  fi
+}
+
 usage() {
   cat >&2 <<EOF
 tm-search.sh — hardened, config-driven retrieval for transcendence-memory.
@@ -683,6 +705,7 @@ Usage:
   $0 search [--json] <query>      Semantic search (LanceDB). Lazy cold-start absorb.
   $0 query  [--json] <question>   Multimodal RAG query (LightRAG + LLM answer).
   $0 containers [--json] [pat]    List containers (name/objects/index state).
+  $0 errors [--json] [--window 24h] [--category other]  Redacted error details.
   $0 jobs [--json] <id>           One job's state (running / exit_code, plain words).
 
 Flags:
@@ -719,6 +742,7 @@ main() {
     query)         cmd_query "$@" ;;
     containers)    cmd_containers "$@" ;;
     jobs)          cmd_jobs "$@" ;;
+    errors)        cmd_errors "$@" ;;
     -h|--help|help|"") usage; [[ -z "$sub" ]] && exit "$EX_USAGE" || exit "$EX_OK" ;;
     *)             err "unknown subcommand: $sub"; usage; exit "$EX_USAGE" ;;
   esac

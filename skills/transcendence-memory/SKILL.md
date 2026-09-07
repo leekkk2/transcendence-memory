@@ -258,6 +258,15 @@ Self-hosted autonomous memory-governance subsystem. **All dry-run-first and safe
 | `POST /admin/agent/{name}/invoke` · `GET /admin/agent/runs` | LLM tool-use orchestration agent (opt-in behind `TM_AGENT_ORCHESTRATION_ENABLED`, default OFF). Reversible tools apply only when `dry_run=false` AND `allow_apply=true` |
 | `GET /admin/agent/approvals` · `POST …/{id}/approve` · `POST …/{id}/reject` | Human approval queue — `/approve` is the **only** place a destructive governance tool runs for real; the unattended loop never executes destructive tools itself |
 
+
+## Operations: preserve the approved vector space
+
+- A model alias and its dimensions do **not** identify a vector space. Never change an embedding model/provider/channel or enable cross-model fallback without explicit user approval. A successful fallback response can corrupt retrieval while still reporting HTTP 200.
+- To repair suspected contamination, inspect the **server repository** and compare actual vectors with the approved channel. Historical `embedding_model` labels can describe the primary even when a fallback generated the vector. Back up first; rebuild in an isolated workspace, verify every source row, then switch.
+- `bash scripts/tm-search.sh errors --category other` shows errors excluding unauthenticated 404s. Use `--category all` for the raw record set or `authenticated` for requests carrying API credentials. Counts of probes to unknown URLs are not evidence of memory failures. Historical bodies may be unavailable; new entries include redacted details and a request ID.
+- `python3 scripts/tm-governance.py tools` inspects the toolbox. `invoke <tool>` defaults to a dry run and reads the container from config; `--params-file` supplies structured parameters. `--apply` executes explicitly; quarantine additionally requires `--confirm-quarantine`. A request to configure tools does not authorize quarantining real memories.
+- Model input bounds and aggregation are part of the index contract. Server `TM_EMBEDDING_MAX_INPUT_CHARS` / `TM_EMBEDDING_MAX_BATCH_SIZE` apply the same full-content splitting and pooling in worker and retrieval; changing these requires reindexing affected long inputs. Do not silently truncate a memory to work around upstream 502 limits.
+
 ## Gotchas — 最常踩的坑（写新代码前先扫一遍）
 
 | 症状 | 真因 | 修复 |
