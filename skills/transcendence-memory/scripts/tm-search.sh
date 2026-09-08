@@ -55,7 +55,7 @@ readonly CONFIG_FILE="${TM_CONFIG_FILE:-$HOME/.transcendence-memory/config.toml}
 #                         on stdout so we can classify transient/config/auth.
 # NOTE: deliberately NO --retry-all-errors — that would retry on HTTP errors too,
 # which is unsafe for writes; this script is read-only but we keep the discipline.
-readonly CURL_RESILIENCE=(--connect-timeout 5 --retry 3 --retry-delay 2 --retry-connrefused --fail-with-body)
+readonly CURL_RESILIENCE=(--connect-timeout 5 --retry 0 --fail-with-body)
 
 # Per-operation --max-time ceilings (overall wall-clock budget per request):
 #   health : tiny JSON, must be a fast liveness probe.
@@ -71,11 +71,11 @@ readonly ADMIN_MAX_TIME=30          # /containers + /jobs/{id}: tiny metadata re
 
 # Cold-start lazy-absorption tuning (search only). A cold server answers 200 with
 # a degraded body; we re-send the SAME query until per_container goes all-ok.
-#   COLD_RETRY_MAX=8   : server cold-start is empirically 5-10s; 8 tries * 2s gap
+#   COLD_RETRY_MAX=4   : at most 4 application-level cold-start attempts
 #                        (~16s+ request time) comfortably covers the warm-up.
 #   COLD_RETRY_DELAY_S=2: short gap — re-send quickly once the prior attempt returns.
 # Both overridable via env for tuning without editing the script.
-readonly COLD_RETRY_MAX="${TM_COLD_RETRY_MAX:-8}"
+readonly COLD_RETRY_MAX="${TM_COLD_RETRY_MAX:-4}"
 readonly COLD_RETRY_DELAY_S="${TM_COLD_RETRY_DELAY_S:-2}"
 
 # Direct-fallback connect-timeout (the second, --noproxy '*' attempt). DELIBERATELY
@@ -186,8 +186,17 @@ load_config() {
   #   default        → proxy-first, then direct fallback (covers GFW-region hosts).
   # NOTE: assembled here (not via a helper returning lines) to stay compatible
   # with macOS bash 3.2, which has no `mapfile`/`readarray`.
+  TRANSPORT_MODE="${TM_TRANSPORT_MODE:-$(toml_get transport_mode || :)}"
+  TRANSPORT_MODE="${TRANSPORT_MODE:-auto}"
+  case "$TRANSPORT_MODE" in auto|direct|proxy) ;; *) err "invalid transport_mode"; exit "$EX_CONFIG" ;; esac
   FORCE_DIRECT=0
-  [[ "${TM_NO_PROXY:-0}" == "1" ]] && FORCE_DIRECT=1
+  [[ "$TRANSPORT_MODE" == "direct" ]] && FORCE_DIRECT=1
+  [[ -z "${TM_TRANSPORT_MODE:-}" && "${TM_NO_PROXY:-0}" == "1" ]] && FORCE_DIRECT=1
+  PROXY_ARGS=()
+  if [[ "$TRANSPORT_MODE" == "proxy" && "$FORCE_DIRECT" == "0" ]]; then
+    [[ -n "${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-${ALL_PROXY:-${all_proxy:-}}}}}}" ]] || { err "proxy mode requires a proxy environment variable"; exit "$EX_CONFIG"; }
+    PROXY_ARGS=(--noproxy "")
+  fi
   # Direct-connect flags reused by the fallback path (and by TM_NO_PROXY=1).
   if [[ -n "${ENDPOINT_HOST:-}" ]]; then
     DIRECT_ARGS=(--noproxy "$ENDPOINT_HOST")
@@ -240,7 +249,8 @@ classify_and_exit() {
 # error (4xx/5xx) means the request DID reach the server — no point re-routing.
 is_connection_failure() {
   local rc="$1" http="$2"
-  [[ "$rc" -eq 6 || "$rc" -eq 7 || "$rc" -eq 28 ]] \
+  [[ "${TRANSPORT_MODE:-auto}" == "proxy" ]] && return 1
+  [[ "$rc" -eq 6 || "$rc" -eq 7 || "$rc" -eq 28 || "$rc" -eq 35 ]] \
     && [[ -z "$http" || "$http" == "000" ]]
 }
 
@@ -289,9 +299,9 @@ http_post_json() {
     _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
   else
     # Attempt #1: honor ambient *_PROXY (no --noproxy).
-    _post_once ""
+    _post_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
     # Attempt #2 (auto): connection-class failure → retry direct.
-    if is_connection_failure "$rc" "${out##*$'\n'}"; then
+    if [[ "$url" != */query ]] && is_connection_failure "$rc" "${out##*$'\n'}"; then
       err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
       _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
     fi
@@ -346,7 +356,7 @@ http_get() {
 # Authenticated GET helper for the small read-only admin endpoints
 # (/containers, /jobs/{id}). Same proxy-first + direct-fallback model as
 # http_get, plus the X-API-KEY header (those endpoints require auth, unlike
-# /health). Read-only → CURL_RESILIENCE retries are safe here.
+# /health). Read-only; at most one alternate route, no curl retry multiplier.
 http_get_auth() {
   local url="$1" max_time="$2"
   local out rc
@@ -373,7 +383,7 @@ http_get_auth() {
   if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
     _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
   else
-    _get_auth_once ""
+    _get_auth_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
     if is_connection_failure "$rc" "${out##*$'\n'}"; then
       err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
       _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
@@ -433,12 +443,15 @@ cmd_status() {
 }
 
 cmd_search() {
-  local json_out=0
+  local json_out=0 rerank=null max_distance=null
   # Parse flags (only --json) then take the rest as the query.
   local args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --json) json_out=1; shift ;;
+      --rerank) rerank=true; shift ;;
+      --no-rerank) rerank=false; shift ;;
+      --max-distance) [[ $# -ge 2 ]] || { err "--max-distance needs a number"; exit "$EX_USAGE"; }; max_distance="$2"; shift 2 ;;
       --)     shift; while [[ $# -gt 0 ]]; do args+=("$1"); shift; done ;;
       *)      args+=("$1"); shift ;;
     esac
@@ -461,7 +474,10 @@ cmd_search() {
     --arg c "$CONTAINER" \
     --arg q "$query" \
     --argjson k "$DEFAULT_TOPK" \
-    '{container: $c, query: $q, topk: $k, union: false}')"
+    --argjson rerank "$rerank" --argjson distance "$max_distance" \
+    '{container: $c, query: $q, topk: $k, union: false}
+     + (if $rerank != null then {rerank: $rerank} else {} end)
+     + (if $distance != null then {score_threshold: $distance} else {} end)')"
 
   # Lazy cold-start absorption: send, inspect body, re-send the SAME query on a
   # cold/degraded body. Steady state (first response already ok) = single call,
@@ -503,7 +519,8 @@ cmd_search() {
     jq -r '
       "hits: \((.results // []) | length)"
       + " | union_applied: \(.union_applied // false)"
-      + " | degraded: \(.degraded // false)"
+      + " | degraded: \(.is_degraded // .degraded // false)"
+      + " | rerank_applied: \(.rerank_applied // false)"
       + (if (.per_container_status // {}) | length > 0
            then " | per_container_status: " + ((.per_container_status | to_entries | map("\(.key)=\(.value)") | join(",")))
            else "" end)
@@ -513,7 +530,7 @@ cmd_search() {
       "",
       ( (.results // [])
         | to_entries[]
-        | "── #\(.key + 1)  score=\(.value.score // "?")"
+        | "── #\(.key + 1)  vector_distance↓=\(.value.vector_distance // .value.vectorScore // .value.score // "?")  rerank_relevance↑=\(.value.rerank_score // .value.rerankScore // "not_available")"
           + (if (.value.container // "") != "" then "  [\(.value.container)]" else "" end)
           + (if (.value.lineStart // null) != null then "  L\(.value.lineStart)–\(.value.lineEnd // "?")" else "" end)
           + (if (.value.title // "") != "" then "  title: \(.value.title)" else "" end)
@@ -575,11 +592,12 @@ cmd_query() {
       "answer:",
       (.answer // "(no answer)"),
       "",
-      "sources: \((.sources // []) | length)",
-      ( (.sources // [])
+      "citations: \((.citations // .sources // []) | length)",
+      ( (.citations // .sources // [])
         | to_entries[]
-        | "── #\(.key + 1)  score=\(.value.score // .value.vectorScore // .value.rerankScore // "?")"
-          + "\n" + ((.value.text // .value.content // "(no text)"))
+        | "── #\(.key + 1)  vector_distance↓=\(.value.vector_distance // .value.vectorScore // .value.score // "?")"
+          + "  source=\(.value.sourcePath // .value.chunkId // .value.chunk_id // "unknown")"
+          + (if (.value.text // .value.content) != null then "\n" + (.value.text // .value.content) else "" end)
       )
     ' <<<"$LAST_BODY" 2>/dev/null || {
       err "query returned non-JSON or unexpected shape:"

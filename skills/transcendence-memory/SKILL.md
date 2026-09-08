@@ -46,11 +46,12 @@ For agents without a Claude Code-compatible plugin manager:
 npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory
 ```
 
-Or clone directly into the host agent's skill directory:
+Keep the source checkout separate from the installed skill:
 
 ```bash
-git clone https://github.com/leekkk2/transcendence-memory.git \
-  ~/.agents/skills/transcendence-memory
+git clone https://github.com/leekkk2/transcendence-memory.git ~/src/transcendence-memory
+cd ~/src/transcendence-memory
+python3 scripts/install.py --agents codex gemini
 ```
 
 > Cursor's directory is `~/.cursor/skills/`; consult your agent's docs for the canonical path. `/tm upgrade` auto-detects the install root from a list of well-known paths.
@@ -59,7 +60,7 @@ git clone https://github.com/leekkk2/transcendence-memory.git \
 
 - **Retrieval has exactly one correct path — HTTP only (STRICT).** Recalling / searching memory goes **only** through this skill's backend over HTTP: the configured `endpoint`'s `/search` or `/query` (preferred wrapper: `bash scripts/tm-search.sh search <query>`). **Never `docker exec` into any local database to look for memories** — not `supabase_db_*`, not a `claude-mem` postgres, not `memory-app` / `memory-copilot`, not any app's local `supabase` / `psql`. Those are *other projects' private stores* with no relationship to this skill's backend; querying them is both wrong (no data there) and a cross-project contamination violation. If `scripts/tm-search.sh` is unavailable, fall back to inline `curl` against the configured `endpoint` (see the curl escape hatch in the slash-command STRICT block below) — still pure HTTP, never a container shell.
 - **Keep builtin memory**: server-side memory augments the agent's builtin memory instead of replacing it
-- **Zero dependency**: no extra package installation is required; the agent can do everything with native tools such as curl, file I/O, and the Python standard library
+- **Explicit dependencies**: Bash wrappers require Bash/curl/jq; remember/redaction additionally require Python 3. Native Python CLI uses httpx/Typer/Rich and needs no Bash/jq. See `references/search-contract.md`.
 - **Progressive loading**: read `references/setup.md` during first-time setup, then this file is enough for day-to-day use
 - **Two paths, no auto-bridge**: `/ingest-memory/objects` writes to LanceDB (served by `/search`); `/documents/text` and `/documents/upload` write to the RAG-Anything knowledge graph (served by `/query`). Data ingested through one path is **not** auto-promoted to the other. When you need both `/search` snippets and `/query` synthesis, you must dual-write. See `references/best-practices.md`.
 
@@ -293,6 +294,10 @@ Self-hosted autonomous memory-governance subsystem. **All dry-run-first and safe
 
 > **黄金法则**：HTTP 200 ≠ 业务完成。所有写路径（`/embed` / `/documents/*` / `/upload`）都是 fire-and-forget；只有 `/search` 同步。冷启动时连读路径的 200 都可能携带 degraded body——务必解析。
 
+## Cross-platform installation
+
+Keep the repository checkout separate from the installed skill. Run `python3 scripts/install.py` from the repo (PowerShell: `scripts/install.ps1`). It installs the complete skill tree and existing native CLI; never edits global rules or network settings. See [installation compatibility](references/compatibility.md).
+
 ## First-Time Setup
 
 On first use, read `references/setup.md` to complete configuration.
@@ -303,7 +308,7 @@ The core flow has only two steps:
 
 Or run `/tm connect --manual` and enter the values step by step.
 
-To verify connectivity afterwards, prefer `bash scripts/tm-search.sh status` (a zero-dependency health probe that runs on any agent — Claude / Gemini / Codex — and parses the body for cold-start signals, so a degraded `200` is not mistaken for success). No binary needs to be installed for this — the wrapper script is enough; the optional `tm` CLI (`transcendence-memory-cli`) is a separate convenience, and there is no `tm-codex` binary.
+To verify connectivity afterwards, prefer `bash scripts/tm-search.sh status` (a Bash/curl/jq health probe that runs on any agent — Claude / Gemini / Codex — and parses the body for cold-start signals, so a degraded `200` is not mistaken for success). No binary needs to be installed for this — the wrapper script is enough; the optional `tm` CLI (`transcendence-memory-cli`) is a separate convenience, and there is no `tm-codex` binary.
 
 > After configuration is complete, `references/setup.md` no longer needs to be loaded into context.
 

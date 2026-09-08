@@ -67,24 +67,6 @@ tm_store() {
 #            PRIVATE KEY block, JWT-like triple-segment token。
 # 设计取舍: 仅 sed/正则、零依赖、行内替换；不做语义识别，宁可漏判也不破坏正常文本。
 redact_secrets() {
-    local input
-    if [ "$#" -ge 1 ]; then
-        input="$1"
-    else
-        input=$(cat)
-    fi
-    printf '%s' "$input" | sed -E \
-        -e 's/sk-[A-Za-z0-9_-]{20,}/sk-***REDACTED***/g' \
-        -e 's/pk_live_[A-Za-z0-9]{20,}/pk_live_***REDACTED***/g' \
-        -e 's/sk_live_[A-Za-z0-9]{20,}/sk_live_***REDACTED***/g' \
-        -e 's/xoxb-[A-Za-z0-9-]{20,}/xoxb-***REDACTED***/g' \
-        -e 's/xoxp-[A-Za-z0-9-]{20,}/xoxp-***REDACTED***/g' \
-        -e 's/ghp_[A-Za-z0-9]{30,}/ghp_***REDACTED***/g' \
-        -e 's/gho_[A-Za-z0-9]{30,}/gho_***REDACTED***/g' \
-        -e 's/AKIA[A-Z0-9]{16}/AKIA***REDACTED***/g' \
-        -e 's/([Aa]uthorization:[[:space:]]*[Bb]earer[[:space:]]+)[A-Za-z0-9._-]+/\1***REDACTED***/g' \
-        -e 's#(https?://[^/[:space:]]*:)[^@[:space:]]+(@)#\1***REDACTED***\2#g' \
-        -e 's#([a-z][a-z0-9+.-]*://[^/[:space:]]*:)[^@[:space:]]+(@)#\1***REDACTED***\2#g' \
-        -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]*-----END [A-Z ]*PRIVATE KEY-----/***PRIVATE_KEY_REDACTED***/g' \
-        -e 's/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/***JWT_REDACTED***/g'
+    local engine="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills/transcendence-memory/scripts/redact.py"
+    if [ "$#" -ge 1 ]; then printf '%s' "$1" | python3 "$engine"; else python3 "$engine"; fi
 }

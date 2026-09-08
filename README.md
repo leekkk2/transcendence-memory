@@ -171,3 +171,7 @@ hooks/
 
 MIT
 
+
+## Cross-platform installation / 跨平台接入
+
+Clone into a checkout separate from your skill directory, then run `python3 scripts/install.py` (Windows: `scripts/install.ps1`). See [compatibility and update policy](docs/compatibility.md). Bash wrappers require Bash/curl/jq; remember/redaction needs Python 3. The native CLI uses Python/httpx/Typer/Rich, without Bash or jq.

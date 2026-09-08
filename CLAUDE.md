@@ -1,6 +1,6 @@
 # Transcendence Memory — Agent Instructions
 
-本仓库是一个 **Claude Code 技能插件**，零依赖，零代码。
+本仓库是一个 **跨平台 Agent 技能插件与客户端包装**；包含Bash/Python/PowerShell脚本和契约测试。
 
 ## 包含
 
@@ -10,7 +10,7 @@
 
 ## 不包含
 
-- 源码、测试、构建系统 — 本仓库纯文档
+- HTTP客户端核心 → 复用服务端仓库的 `cli-package`；不要新增第三套客户端
 - 服务端代码 → `transcendence-memory-server`
 
 ## 编辑约束

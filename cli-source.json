@@ -1,0 +1,5 @@
+{
+  "version": "0.2.0",
+  "source_revision": "6eac2b6f6a108d0f5c0cf67bd3beee4b281a36e1",
+  "requirement": "git+https://github.com/leekkk2/transcendence-memory-server.git@6eac2b6f6a108d0f5c0cf67bd3beee4b281a36e1#subdirectory=cli-package"
+}

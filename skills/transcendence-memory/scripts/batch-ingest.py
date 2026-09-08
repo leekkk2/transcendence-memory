@@ -85,10 +85,8 @@ _REDACT_PATTERNS: list[tuple[re.Pattern, str]] = [
 
 
 def redact_text(text: str) -> str:
-    """对文本中的常见敏感信息做正则脱敏。"""
-    for pattern, replacement in _REDACT_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
+    from redact import redact_text as shared_redact
+    return shared_redact(text)
 
 
 def probe_contract(endpoint: str, api_key: str) -> dict | None:
@@ -384,8 +382,9 @@ def main() -> None:
                     continue
 
                 # 脱敏处理
-                if do_redact and "text" in obj:
-                    obj["text"] = redact_text(obj["text"])
+                if do_redact:
+                    from redact import redact
+                    obj = redact(obj)
 
                 obj_bytes = len(json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 

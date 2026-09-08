@@ -1,0 +1,24 @@
+name: Client contract
+on:
+  push:
+    branches: [main, 'codex/tm-feedback-fixes-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cross-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned native client
+        run: python -c "import json,subprocess,sys; subprocess.run([sys.executable,'-m','pip','install',json.load(open('cli-source.json'))['requirement']],check=True)"
+      - name: Test complete installation and native wrappers
+        run: python -m unittest discover -s tests -v
