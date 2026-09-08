@@ -8,5 +8,6 @@ $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 if (-not $CliArgs) { $CliArgs = @('--help') }
 if ($CliArgs -contains '--manual') { & $python -X utf8 -m tm_cli.main @CliArgs; exit $LASTEXITCODE }
 $envelope = ConvertTo-Json -InputObject @($CliArgs) -Compress
-$envelope | & $python -X utf8 (Join-Path $PSScriptRoot 'tm-entry.py')
+$encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($envelope))
+('TM_ARGS_V1:' + $encoded) | & $python -X utf8 (Join-Path $PSScriptRoot 'tm-entry.py')
 exit $LASTEXITCODE
