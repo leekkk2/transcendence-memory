@@ -113,8 +113,17 @@ load_config() {
 
   # Proxy routing: same two-path model as tm-search.sh (see its load_config for
   # the full rationale). TM_NO_PROXY=1 forces direct-only.
+  TRANSPORT_MODE="${TM_TRANSPORT_MODE:-$(toml_get transport_mode || :)}"
+  TRANSPORT_MODE="${TRANSPORT_MODE:-auto}"
+  case "$TRANSPORT_MODE" in auto|direct|proxy) ;; *) err "invalid transport_mode"; exit "$EX_CONFIG" ;; esac
   FORCE_DIRECT=0
-  [[ "${TM_NO_PROXY:-0}" == "1" ]] && FORCE_DIRECT=1
+  [[ "$TRANSPORT_MODE" == "direct" ]] && FORCE_DIRECT=1
+  [[ -z "${TM_TRANSPORT_MODE:-}" && "${TM_NO_PROXY:-0}" == "1" ]] && FORCE_DIRECT=1
+  PROXY_ARGS=()
+  if [[ "$TRANSPORT_MODE" == "proxy" && "$FORCE_DIRECT" == "0" ]]; then
+    [[ -n "${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-${ALL_PROXY:-${all_proxy:-}}}}}}" ]] || { err "proxy mode requires a proxy environment variable"; exit "$EX_CONFIG"; }
+    PROXY_ARGS=(--noproxy "")
+  fi
   if [[ -n "${ENDPOINT_HOST:-}" ]]; then
     DIRECT_ARGS=(--noproxy "$ENDPOINT_HOST")
   else
@@ -129,20 +138,7 @@ load_config() {
 # PRIVATE KEY block, JWT-like triple-segment token.
 # Trade-off: pure sed, no semantic detection — prefer a miss over mangling text.
 redact_secrets() {
-  sed -E \
-    -e 's/sk-[A-Za-z0-9_-]{20,}/sk-***REDACTED***/g' \
-    -e 's/pk_live_[A-Za-z0-9]{20,}/pk_live_***REDACTED***/g' \
-    -e 's/sk_live_[A-Za-z0-9]{20,}/sk_live_***REDACTED***/g' \
-    -e 's/xoxb-[A-Za-z0-9-]{20,}/xoxb-***REDACTED***/g' \
-    -e 's/xoxp-[A-Za-z0-9-]{20,}/xoxp-***REDACTED***/g' \
-    -e 's/ghp_[A-Za-z0-9]{30,}/ghp_***REDACTED***/g' \
-    -e 's/gho_[A-Za-z0-9]{30,}/gho_***REDACTED***/g' \
-    -e 's/AKIA[A-Z0-9]{16}/AKIA***REDACTED***/g' \
-    -e 's/([Aa]uthorization:[[:space:]]*[Bb]earer[[:space:]]+)[A-Za-z0-9._-]+/\1***REDACTED***/g' \
-    -e 's#(https?://[^/[:space:]]*:)[^@[:space:]]+(@)#\1***REDACTED***\2#g' \
-    -e 's#([a-z][a-z0-9+.-]*://[^/[:space:]]*:)[^@[:space:]]+(@)#\1***REDACTED***\2#g' \
-    -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]*-----END [A-Z ]*PRIVATE KEY-----/***PRIVATE_KEY_REDACTED***/g' \
-    -e 's/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/***JWT_REDACTED***/g'
+  python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redact.py"
 }
 
 # POST helper — same shape as tm-search.sh's http_post_json minus --retry (see
@@ -180,9 +176,9 @@ http_post_json() {
   if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
     _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
   else
-    _post_once ""
+    _post_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
     local http_probe="${out##*$'\n'}"
-    if [[ ( "$rc" -eq 6 || "$rc" -eq 7 ) && ( -z "$http_probe" || "$http_probe" == "000" ) ]]; then
+    if [[ "$TRANSPORT_MODE" != "proxy" && ( "$rc" -eq 6 || "$rc" -eq 7 ) && ( -z "$http_probe" || "$http_probe" == "000" ) ]]; then
       err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
       _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
     fi
@@ -268,6 +264,7 @@ EOF
 main() {
   require_cmd curl
   require_cmd jq
+  require_cmd python3
 
   local text="" title="" tags_csv="" container_override="" mem_id="" auto_embed=true json_out=0
 
@@ -353,6 +350,9 @@ else:
 PY
 }
 
+  text="$(printf '%s' "$text" | redact_secrets)"
+  title="$(printf '%s' "$title" | redact_secrets)"
+  tags_csv="$(printf '%s' "$tags_csv" | redact_secrets)"
   # Generate semantic slug id if not explicitly provided (replaces opaque timestamp id)
   if [[ -z "$mem_id" ]]; then
     mem_id="$(derive_semantic_id "$title" "$tags_csv" "$text")"
@@ -392,7 +392,7 @@ PY
     printf '%s\n' "$LAST_BODY"
   else
     local embed_state="skipped"
-    [[ "$auto_embed" == "true" ]] && embed_state="queued"
+    [[ "$auto_embed" == "true" ]] && embed_state="$(jq -r ' .index_status // "unknown" ' <<<"$LAST_BODY")"
     local disp_title="${title:-${text:0:36}...}"
     local disp_tags="${tags_csv:-none}"
     printf 'stored: container=%s title="%s" tags=[%s] embed=%s (id=%s)\n' \

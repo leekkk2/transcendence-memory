@@ -62,7 +62,7 @@ api-reference.md 给"完整字段类型 / 别名 / 取全文"细节。三者保�
 | `remember <text>` | POST /ingest-memory/objects | 是 | `accepted` / `index_hint` | `auto_embed:true` 自动入队 |
 | `update <id> <text>` | PUT /containers/{c}/memories/{id} | 是 | `status:"updated"` | 之后需 `/tm embed` |
 | `embed` | POST /embed | 是 | `pid`(=job_id) / `status` | 默认 `wait:false` 入队立返；index 重建**可轮询** |
-| `query <q>` | POST /query | 是 | `answer` + `sources[]` | LLM 综合答案 |
+| `query <q>` | POST /query | 是 | `answer` + `citations[]` | LLM 综合答案 |
 | `upload <file>` | POST /documents/upload | 是 | `pid`/`job_id` | KG 构建异步入队，**勿轮询** |
 | `containers [pat]` | GET /containers | 是 | `containers[]` / `count` | 模糊过滤 |
 | `batch <file.jsonl>` | scripts/batch-ingest.py → POST /ingest-memory/objects | 是 | 脚本汇总 | 内置 WAF UA / 413 缩批 |
@@ -229,7 +229,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | 字段 | 含义 |
 |---|---|
 | `results[].text` | 命中正文（主字段；别名 `content`/`chunk` 见 api-reference） |
-| `results[].score` | 相关性分（rerank 后可能呈 `vectorScore`/`rerankScore`，见 api-reference） |
+| `results[].score` | 平方L2距离（越小越相关）；重排相关性由rerankScore单独返回 |
 | `results[].taskId` + `chunkId` | 客户端 `id` **不回流** `results[].id`；按这两者或 `text` 匹配 |
 | `results[].lineStart` / `lineEnd` | **v0.19.0**：命中 chunk 在源文件中的 1-based 起止行号；**P4 前 ingest 的老 chunk 恒 `null`**（无 schema 迁移、无需 re-embed），新 chunk 才有值。可据此构造"文件 X 第 42–67 行"式源定位 |
 | `citations` | **v0.19.0**：结构化溯源数组（投影 `chunkId`/`sourcePath`/`section`/`score`/`container`/`lineStart`/`lineEnd`）。`/search` 默认**开**（`citation_enabled=true`）；老客户端忽略不影响 |
@@ -247,8 +247,8 @@ curl -sS -X POST "${ENDPOINT}/search" \
 - `title` 字段在多数情况下为空 `""`，即使 ingest 时显式给了；以 `text` 头几行为准。
 - **行号溯源（v0.19.0）**：`results[].lineStart`/`lineEnd` 与 `citations[]` 给出命中 chunk 的源文件行范围——**仅 P4 后 ingest 的新 chunk 有值，老 chunk 恒 `null`**（向后兼容、零 re-embed）。渲染源定位链接前先判 `lineStart != null`。
 - **score-gate 拦截 ≠ 库空（v0.19.0）**：`/search` 默认不开 score-gate（`blocked_low_score` 恒 0）。若服务端配了 `similarity_threshold` 或你传了请求级 `score_threshold`，低于阈值的命中被丢弃并计入 `blocked_low_score`；看到 `results:[]` 同时 `blocked_low_score>0` 是阈值过严，**别误判为"没有这条记忆"**。
-- **`/search` vs `/query` 字段名不同**：`/search` 命中在 `results[]`、正文字段是 **`text`**；`/query` 的检索证据在 **`sources[]`**、正文字段是 **`content`**（不是 `text`）。跨两个端点解析时不要假设同名。
-- **开启 reranker 后分数字段会变**：未 rerank 时只有单一 `score`（向量相似度）；rerank 后可能改为 / 附加 `vectorScore`（召回阶段）+ `rerankScore`（重排后，排序以它为准）。读分数优先认 `rerankScore`（若存在），否则回落 `score`；不要硬编码只读 `score`。
+- **`/search` vs `/query` 字段名不同**：`/search` 命中在 `results[]`、正文字段是 **`text`**；`/query` 的检索证据在 **`citations[]`**、引用字段为chunkId/sourcePath，未必有正文。跨两个端点解析时不要假设同名。
+- **重排保留向量距离**：`score`/`vectorScore` 是低优的平方L2距离；`rerankScore` 是高优的相关性，不能跨量纲兜底。按服务端顺序展示，分别读取两类分数，并保留有效的 0。
 - **结果可能被 `topk` / `top_k` 截断，长文本只回中间 chunk**：要拿全文按 `taskId` 拉该来源全部 chunk，或调大 `topk` 重查——单条命中不等于该记忆全文。
 - 详细字段定义与别名 / 取全文方法见 [api-reference.md「响应字段别名对照表」](./api-reference.md#响应字段别名对照表坑-d) 与 [§POST /search](./api-reference.md#post-search) / [§POST /query](./api-reference.md#post-query)。
 
@@ -378,8 +378,8 @@ curl -sS -X POST "${ENDPOINT}/query" \
 | `rerank` | bool | route 默认 | 临时开/关重排（字段名必须 `rerank`，非 `enable_rerank`） |
 | `reranker_model` | string | route 默认 | 临时换 reranker profile |
 
-响应：`{"answer":"...","sources":[{"chunk_id":"...","score":0.85,"text":"..."}]}`。
-注意 `/query` 的来源数组叫 **`sources`**（每条 `chunk_id`/`score`/`text`），与 `/search` 的 `results` 不同名；rerank 后分数语义见 [api-reference.md 别名表](./api-reference.md#响应字段别名对照表坑-d)。
+响应：`{"answer":"...","citations":[{"chunkId":"...","score":0.85,"sourcePath":"..."}]}`。
+注意 `/query` 的来源数组叫 **`citations`**（每条 `chunkId`/`sourcePath`/可空的距离`score`），与 `/search` 的 `results` 不同名；rerank 后分数语义见 [api-reference.md 别名表](./api-reference.md#响应字段别名对照表坑-d)。
 
 > **前提**：`/query` 只看 `/documents/text` / `/documents/upload` 入库的内容（`/tm remember` 的 LanceDB-only 记忆不参与综合）。**异步**：刚 ingest 完立即 `/query` 返空属正常，KG 尚未建好——见 SKILL.md async silent-mode，**勿轮询** KG 构建任务。
 

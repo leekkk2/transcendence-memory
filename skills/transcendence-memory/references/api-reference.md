@@ -51,9 +51,9 @@
 
 | 维度 | `POST /search`（LanceDB 轻量路径） | `POST /query`（RAG-Anything + LLM） |
 |---|---|---|
-| 命中数组字段名 | **`results`**（不是 `hits`） | **`sources`**（不是 `results`/`hits`） |
-| 正文字段 | `results[].text` | `sources[].text` |
-| 分数字段 | `results[].score` | `sources[].score`（开 rerank 后语义变，见下） |
+| 命中数组字段名 | **`results`**（不是 `hits`） | **`citations`**（不是 `results`/`hits`） |
+| 正文字段 | `results[].text` | `citations[]`来源定位 |
+| 分数字段 | `results[].score` | `citations[].score`（距离，可空） |
 | 主键线索 | `taskId` + `chunkId`（**无顶级 `id`**） | `chunk_id`（注意是 `chunk_id` 蛇形，非 `chunkId`） |
 | 是否含 LLM 综合答案 | 否（只回原文 chunk） | 是（顶级 `answer`） |
 
@@ -63,7 +63,7 @@
 
 | 你可能在代码/旧文档/上游库里看到的名字 | 实际在本服务的对应 | 说明 |
 |---|---|---|
-| **`text`** | ✅ 规范字段 | `/search` `results[].text`、`/query` `sources[].text` 都用它，**优先读 `text`** |
+| **`text`** | ✅ 规范字段 | `/search` `results[].text`、历史`/query`扩展可能使用它；当前`/query`返回`citations`，不保证正文，**优先读 `text`** |
 | `content` | 等价别名 | LightRAG / 部分上游把 chunk 正文叫 `content`；本服务回 `text`。自写解析器建议 `hit.get("text") or hit.get("content")` 兜底 |
 | `chunk` / `chunk_text` / `snippet` | 等价别名 | 同上，均指"命中片段正文"。本服务规范名仍是 `text` |
 | `page_content` | 等价别名 | LangChain 风格命名，本服务不用，做兼容时按 `text` 映射 |
@@ -73,21 +73,12 @@
 > body = hit.get("text") or hit.get("content") or hit.get("chunk") or ""
 > ```
 
-### 3. 分数字段别名：`score` 与 rerank 后可能出现的 `vectorScore` / `rerankScore`
+### 3. 分数、排序与兼容字段
 
-| 字段 | 何时出现 | 含义 / 区间 |
-|---|---|---|
-| **`score`** | 始终 | 命中的相关性分。`/search` = LanceDB 余弦距离派生分；`/query` 未开 rerank 时 = 向量召回分 |
-| `vectorScore` / `vector_score` | 开 reranker 后可能并列出现 | **重排前**的向量召回原始分，保留用于对比/调试 |
-| `rerankScore` / `rerank_score` | 开 reranker 后可能并列出现 | reranker（cross-encoder 或 pseudo-rerank）给出的**重排后**分，区间随 reranker 而异（如 0–1） |
-
-**判定与排序约定**：
-- 未开 rerank（默认）：只有 `score`，直接用它排序。
-- 开 rerank（`/query` 带 `rerank:true` 或 route 配了 reranker）：若响应同时给出 `score` + `rerankScore`，**以 `rerankScore` 为最终排序依据**；`vectorScore` 仅供观察召回质量。不同部署可能直接把 `score` 覆盖成 rerank 后分而不另给 `rerankScore` —— 取值兜底：
-  ```python
-  rank = hit.get("rerankScore") or hit.get("rerank_score") or hit.get("score") or 0.0
-  ```
-- 重要：reranker **只作用于 `/query`**。`/search` 是 LanceDB 直查（cosine + topk），**永远不会**出现 `rerankScore`；如果你在 `/search` 结果里找 rerank 分，那是路径选错了。详见 [per-request 控制 reranker](#per-request-控制-rerankerv080)。
+权威说明见 [search-contract.md](search-contract.md)。`/search`支持按路由或请求重排。
+`score`/`vectorScore`为平方L2距离（低优）；`rerankScore`为重排相关性（高优）。
+新版本增加同源的`vector_distance`/`rerank_score`及`distance_metric`，不改变旧字段值。
+零分是有效值，缺失重排分不能用距离代替。返回顺序以服务端为准。
 
 ### 4. 如何取全文 / 避免被截断
 
@@ -225,7 +216,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 - `results[].lineStart` / `lineEnd` (int|null) + `citations[].lineStart`/`lineEnd`：命中 chunk 的源文件 **1-based 起止行号**。**P4（行号溯源）前 ingest 的老 chunk 恒 `null`**——行号存于 chunk `metadata` JSON，**无 LanceDB schema 迁移、无需 re-embed**；新 chunk ingest 后自动带值，客户端 ingest **无需传任何新字段**（server 端自动算）
 - `blocked_low_score` (int)：被 score-gate 拦掉的命中数，**默认 0**（score-gate 默认关）。请求级 `score_threshold` 或服务端 `similarity_threshold` 开启后才可能 `>0`
 - `fallback_rendered` (str|null)：**默认 `null`**。仅当服务端配了 `fallback_template` 且发生 score-gate 全拦 / 全容器降级时渲染结构化兜底串——**非高置信检索结果**，客户端默认无感
-- `rerank_applied` (bool)：本次是否经 reranker 重排（`/search` 恒 `false`，rerank 仅作用于 `/query`）
+- `rerank_applied` (bool)：本次是否经 reranker 重排（`/search`与`/query`均可按配置进行重排）
 
 **自动 union 触发条件**（v0.11.0+）：
 - `union_search_default: true`（profiles.yaml 顶层）或单请求 `"union": true`
@@ -235,7 +226,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 
 **注意**：HTTP 200 不代表成功，需检查 body；跨容器场景下检查 `per_container_status` 定位部分失败的容器，检查 `degraded` 判断结果完整性。`per_container_status` 命中 `timeout`/`not_initialized` 或 `degraded:true` 多半是冷启动/未初始化 sibling，见 [`troubleshooting.md` 冷启动段](./troubleshooting.md#冷启动服务端索引未热起http-200-但-body-未就绪)。
 
-> **字段名与取全文**：`results` 数组、`text`/`score` 字段、以及它们与 `/query` 的 `sources`、rerank 后 `vectorScore`/`rerankScore` 的区别，统一见 [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d)。结果被切成多 chunk / 看似截断时如何取全文也在该段。
+> **字段名与取全文**：`results` 数组、`text`/`score` 字段、以及它们与 `/query` 的 `citations`、rerank 后 `vectorScore`/`rerankScore` 的区别，统一见 [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d)。结果被切成多 chunk / 看似截断时如何取全文也在该段。
 
 ### POST /embed
 
@@ -446,11 +437,11 @@ curl -sS -X POST "${ENDPOINT}/query" \
 ```json
 {
   "answer": "根据知识库内容，...",
-  "sources": [{"chunk_id": "...", "score": 0.85, "text": "..."}]
+  "citations": [{"chunkId": "...", "score": 0.85, "sourcePath": "..."}]
 }
 ```
 
-> **字段名注意**：`/query` 的来源数组叫 **`sources`**（不是 `/search` 的 `results`），主键是蛇形 `chunk_id`（不是 `chunkId`）。开 reranker 后 `score` 语义变为重排后分，可能并列出现 `vectorScore`/`rerankScore` —— 字段别名与排序约定见 [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d)。
+> **字段名注意**：`/query` 的来源数组叫 **`citations`**（不是 `/search` 的 `results`），引用指针为 `chunkId`/`sourcePath`。不得把引用距离当重排分或回答置信度；`/search`的距离与重排分始终分开 —— 字段别名与排序约定见 [响应字段别名对照表（坑 D）](#响应字段别名对照表坑-d)。
 
 **v0.19.0 新增字段**（向后兼容；与 `/search` 同名字段语义一致）：
 - `top_score` (float|null)：score-gate 命中时透出的 top1 chunk L2 距离；**默认关时恒 `null`**
@@ -1011,7 +1002,7 @@ curl -sS -X POST "${ENDPOINT}/query" \
 
 > ⚠ **字段名必须是 `rerank`，不是 `enable_rerank`**。Pydantic 严格模式会**静默丢弃**未知字段 — 错的字段名不会报错也不会生效，reranker 仍然不会被调用。
 
-> ⚠ **Reranker 仅作用于 `/query` 路径**。`/search` 是 LanceDB 直查（cosine + topk），不经过任何 rerank。如果客户端全用 `/search`，rerank 配置再完美也永远不会触发。
+> `/search`支持重排，是否实际执行以`rerank_applied`为准；详[检索契约](search-contract.md)。
 >
 > 数据可来自任一路径：`/query` 在 LightRAG hybrid 模式下，对**LanceDB-only container**（仅 `/ingest-memory/objects` / `/tm remember` 写入）会自动 fallback 用向量检索，reranker 仍正常作用于这些 chunk。要获得更好的 answer 质量（实体抽取 + 关系图），可额外通过 `/documents/text` / `/documents/upload` 入知识图谱。详见 [`best-practices.md`](best-practices.md)。
 
