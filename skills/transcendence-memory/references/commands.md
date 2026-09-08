@@ -165,7 +165,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | `pattern_mode` | string | 否 | `substring` | `substring` / `prefix` / `glob` |
 | `union` | bool\|null | 否 | `null` | 单 container 是否自动并 sibling `_openai`；`null`=随 server 默认 |
 | `per_container_timeout_s` | float | 否 | 12.0 | 单容器子查询超时（0.5–30，v0.11.1+；v0.19.0 起 server 默认放宽到 30.0 降低冷启动误降级） |
-| `score_threshold` | float\|null | 否 | `null` | **v0.19.0**：请求级 score-gate（L2 距离上界，越小越相关）。`null`=随 server `profiles.yaml` 的 `similarity_threshold`（默认 None=关）；`≤0`=显式关。被拦命中数计入响应 `blocked_low_score` |
+| `score_threshold` | float\|null | 否 | `null` | **v0.19.0**：请求级 score-gate（平方L2距离上界，越小越相关）。`null`=随 server `profiles.yaml` 的 `similarity_threshold`（默认 None=关）；`≤0`=显式关。被拦命中数计入响应 `blocked_low_score` |
 | `timeout_s` | int | 否 | 600 | subprocess 整体超时 |
 
 完整入参定义见 [api-reference.md POST /search](./api-reference.md#post-search)。
@@ -246,7 +246,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 - 同一条 ingest 的长文本**会被切成多个 chunks**（`chunkId` 末尾 `#<idx>` 是切片序号）；search 可能返回多条同 `taskId` 的不同 chunk。
 - `title` 字段在多数情况下为空 `""`，即使 ingest 时显式给了；以 `text` 头几行为准。
 - **行号溯源（v0.19.0）**：`results[].lineStart`/`lineEnd` 与 `citations[]` 给出命中 chunk 的源文件行范围——**仅 P4 后 ingest 的新 chunk 有值，老 chunk 恒 `null`**（向后兼容、零 re-embed）。渲染源定位链接前先判 `lineStart != null`。
-- **score-gate 拦截 ≠ 库空（v0.19.0）**：`/search` 默认不开 score-gate（`blocked_low_score` 恒 0）。若服务端配了 `similarity_threshold` 或你传了请求级 `score_threshold`，低于阈值的命中被丢弃并计入 `blocked_low_score`；看到 `results:[]` 同时 `blocked_low_score>0` 是阈值过严，**别误判为"没有这条记忆"**。
+- **score-gate 拦截 ≠ 库空（v0.19.0）**：`/search` 默认不开 score-gate（`blocked_low_score` 恒 0）。若服务端配了 `similarity_threshold` 或你传了请求级 `score_threshold`，向量距离大于上限的命中被丢弃并计入 `blocked_low_score`；看到 `results:[]` 同时 `blocked_low_score>0` 是阈值过严，**别误判为"没有这条记忆"**。
 - **`/search` vs `/query` 字段名不同**：`/search` 命中在 `results[]`、正文字段是 **`text`**；`/query` 的检索证据在 **`citations[]`**、引用字段为chunkId/sourcePath，未必有正文。跨两个端点解析时不要假设同名。
 - **重排保留向量距离**：`score`/`vectorScore` 是低优的平方L2距离；`rerankScore` 是高优的相关性，不能跨量纲兜底。按服务端顺序展示，分别读取两类分数，并保留有效的 0。
 - **结果可能被 `topk` / `top_k` 截断，长文本只回中间 chunk**：要拿全文按 `taskId` 拉该来源全部 chunk，或调大 `topk` 重查——单条命中不等于该记忆全文。

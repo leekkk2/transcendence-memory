@@ -168,7 +168,7 @@ curl -sS -X POST "${ENDPOINT}/search" \
 | `timeout_s` | int | 否 | subprocess 整体超时秒数（默认 600） |
 | `union` | bool | 否 | **v0.11.0+**：单 container 入参时是否自动追加 sibling `_openai` 镜像。`null`（默认）= 走 `profiles.yaml` 的 `union_search_default`；`true/false` 显式覆盖。`containers` / `container_pattern` 模式下被忽略 |
 | `per_container_timeout_s` | float | 否 | **v0.11.0+**：单容器子查询超时（0.5–30s，**默认 12.0**，v0.11.1+；v0.11.0 默认 3.0 但 subprocess cold-start 实测不够稳；v0.19.0 起 server 默认放宽到 30.0）。仅多容器场景启用；超时容器在 `per_container_status` 标记 `timeout`，不影响其余 |
-| `score_threshold` | float\|null | 否 | **v0.19.0**：请求级 score-gate（L2 距离上界，越小越相关）。`null`=随 `profiles.yaml` 的 `similarity_threshold`（默认 None=关）；`≤0`=显式关；请求级优先于全局配置。被拦命中数计入响应 `blocked_low_score` |
+| `score_threshold` | float\|null | 否 | **v0.19.0**：请求级 score-gate（平方L2距离上界，越小越相关）。`null`=随 `profiles.yaml` 的 `similarity_threshold`（默认 None=关）；`≤0`=显式关；请求级优先于全局配置。被拦命中数计入响应 `blocked_low_score` |
 
 跨容器示例：
 
@@ -1000,7 +1000,7 @@ curl -sS -X POST "${ENDPOINT}/query" \
   -d '{"container":"my-project","query":"...","reranker_model":"cohere-v3","rerank":true}'
 ```
 
-> ⚠ **字段名必须是 `rerank`，不是 `enable_rerank`**。Pydantic 严格模式会**静默丢弃**未知字段 — 错的字段名不会报错也不会生效，reranker 仍然不会被调用。
+> ⚠ **字段名必须是 `rerank`，不是 `enable_rerank`**。当前请求模型会忽略未声明字段 — 错的字段名不会报错也不会生效，reranker 仍然不会被调用。
 
 > `/search`支持重排，是否实际执行以`rerank_applied`为准；详[检索契约](search-contract.md)。
 >
