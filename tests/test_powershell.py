@@ -1,4 +1,4 @@
-import json,os,pathlib,subprocess,tempfile,threading,unittest,sys
+import base64,json,os,pathlib,subprocess,tempfile,threading,unittest,sys
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 
@@ -21,6 +21,13 @@ class PowerShellContract(unittest.TestCase):
                     env={**os.environ,'TM_CONFIG_FILE':str(cfg),'TM_PYTHON':sys.executable,'TM_TRANSPORT_MODE':'direct','TM_TEST_QUERY':query,'TM_ENTRY':str(ROOT/'skills/transcendence-memory/scripts/tm-search.ps1')}
                     r=subprocess.run([shell,'-NoProfile','-Command','& $env:TM_ENTRY search --json $env:TM_TEST_QUERY'],env=env,capture_output=True)
                     self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'));self.assertEqual(seen[-1]['query'],query)
+                    tokenfile=p/'token.txt';tokenfile.write_text(base64.b64encode(json.dumps({'endpoint':'https://example.invalid','container':'main','api_key':'synthetic-private-key'}).encode()).decode())
+                    env.update(TM_TOKEN_FILE=str(tokenfile),TM_ENTRY=str(ROOT/'skills/transcendence-memory/scripts/tm.ps1'))
+                    r=subprocess.run([shell,'-NoProfile','-Command','[IO.File]::ReadAllText($env:TM_TOKEN_FILE) | & $env:TM_ENTRY connect --token-stdin'],env=env,capture_output=True)
+                    self.assertEqual(r.returncode,0,r.stderr.decode(errors='replace'))
+                    import tomllib
+                    self.assertEqual(tomllib.loads(cfg.read_text(encoding='utf-8'))['auth']['api_key'],'synthetic-private-key')
+                    self.assertNotIn(b'synthetic-private-key',r.stdout+r.stderr)
         finally:server.shutdown();server.server_close()
 
 if __name__=='__main__':unittest.main()
