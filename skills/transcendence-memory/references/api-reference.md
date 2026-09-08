@@ -842,7 +842,7 @@ curl -sS -X POST "${ENDPOINT}/admin/tools/compress_knowledge_cluster/invoke" \
 | `applied` | bool | 是否真落地了改动 |
 | `notes` | str | 备注 / 指引（如 `pass dry_run=false to execute`） |
 
-**dry_run 语义**：SAFE 工具（`manage_token_quotas` / `analyze_retrieval_latency` 只读；`update_container_routing` 加性写）**总是真执行**；LLM / 破坏性工具默认 `dry_run=true` 只产 plan 预览，显式 `dry_run=false` 才真执行。破坏性 `snapshot_and_quarantine` 经此端点 `dry_run=false` 可直接真执行（运维手动操作）——但在 **agent 循环里它永不自动执行**，只进审批队列（见下）。
+**dry_run 语义**：只读工具（`manage_token_quotas` / `analyze_retrieval_latency`）直接读取当前状态；`update_container_routing` 的 `dry_run=true` 只预览，`false` 才加性写入；LLM / 破坏性工具默认 `dry_run=true` 只产 plan 预览，显式 `dry_run=false` 才真执行。破坏性 `snapshot_and_quarantine` 经此端点 `dry_run=false` 可直接真执行（运维手动操作）——但在 **agent 循环里它永不自动执行**，只进审批队列（见下）。
 
 **`compress_knowledge_cluster` 响应面（v0.21.0 幂等 4 态，详见 [`governance.md`](./governance.md) §2.2）**：
 
