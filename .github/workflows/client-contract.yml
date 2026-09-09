@@ -1,7 +1,7 @@
 name: Client contract
 on:
   push:
-    branches: [main, 'codex/tm-feedback-fixes-*']
+    branches: [main, 'codex/tm-*']
   pull_request:
   workflow_dispatch:
 permissions:
