@@ -1,4 +1,5 @@
-param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CliArgs, [Parameter(ValueFromPipeline=$true)][string]$TokenInput)
+[CmdletBinding(PositionalBinding=$false)]
+param([Parameter(Position=0,ValueFromRemainingArguments=$true)][string[]]$CliArgs, [Parameter(ValueFromPipeline=$true)][string]$TokenInput)
 $ErrorActionPreference = 'Stop'
 $manifest = Join-Path $env:USERPROFILE '.transcendence-memory/install.json'
 $python = $env:TM_PYTHON
