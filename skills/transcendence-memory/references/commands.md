@@ -612,38 +612,17 @@ fi
 
 ### `/tm upgrade`
 
-自动定位安装位置（plugin cache / `~/.claude/skills/` / Cursor / git clone）并 `git pull --ff-only`。非 git 安装（`npx skills add` tarball）则打印重装命令。升级后重启 AI CLI 生效。
+这是 Agent 的升级工作流；原生 Python CLI 的维护入口是安装器。受管安装先读取 `~/.transcendence-memory/install.json` 中的 `repo_root`，然后在该 checkout 运行：
 
 ```bash
-ROOT=""
-for cand in \
-  "${CLAUDE_PLUGIN_ROOT:-}" \
-  "$HOME/.claude/plugins/cache"/*/transcendence-memory \
-  "$HOME/.claude/plugins/cache"/transcendence-memory*/transcendence-memory \
-  "$HOME/.claude/skills/transcendence-memory" \
-  "$HOME/.cursor/skills/transcendence-memory"; do
-  [ -n "$cand" ] && [ -d "$cand/.git" ] && { ROOT="$cand"; break; }
-done
-
-if [ -n "$ROOT" ]; then
-  cd "$ROOT" && git fetch origin && git pull --ff-only origin main
-  echo "Upgraded to $(git rev-parse --short HEAD) at $ROOT"
-  echo "→ Restart your AI CLI (Claude Code / Cursor / etc.) to reload SKILL.md."
-else
-  echo "Skill not installed via git clone. Re-install one of:"
-  echo "  • Claude Code plugin:  /plugin update transcendence-memory@transcendence-memory"
-  echo "  • npx skills:          npx skills add https://github.com/leekkk2/transcendence-memory --skill transcendence-memory --force"
-fi
+python3 scripts/install.py --update
 ```
 
-> 升级刷新 `SKILL.md` / `references/` / `scripts/` / 仓库自带 plugin hooks（SessionStart + UserPromptSubmit + PostToolUse + Stop）。
-> **若升级失败（`fatal: Not possible to fast-forward`）**：本地有 cherry-pick 副本 / divergence。处理：`git tag backup/pre-upgrade-$(date +%Y%m%d) HEAD && git reset --hard origin/main`。完全可回退（`git reset --hard backup/pre-upgrade-<date>`）。
+安装器沿用已有 Agent 入口选择，要求正确的远端和干净 checkout，并只允许 `git pull --ff-only`。完整技能、引用文档和辅助文件一起更新；旧版保留在发现目录之外，可用 `--rollback` 恢复。
 
----
+没有 manifest 时，区分插件市场安装与独立 Git checkout：市场安装用其原生更新命令；独立 checkout 先检查远端、分支和 `git status`，再 fast-forward。不能在技能的复制目录中执行 git pull。
 
-## Quick Reference（单页 curl 矩阵）
-
-需要单页速览所有端点时用。变量读自 `~/.transcendence-memory/config.toml`；认证 `X-API-KEY: <key>` 或 `Authorization: Bearer <key>`。
+遇到本地修改或分叉时保留现场并说明差异；备份 tag 不包含未提交内容，禁止自动 `git reset --hard`。更新后重新加载 Agent 会话以发现新资源。
 
 ### 文本记忆（轻量路径）
 
