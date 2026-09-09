@@ -16,7 +16,7 @@ allowed-tools: Bash, Read, Write, Grep, Glob
 
 `tm` is the **short alias** for the `transcendence-memory` skill. They share the same configuration (`~/.transcendence-memory/config.toml`), the same backend, the same commands.
 
-> **Important — `/tm` is a slash command, NOT a shell binary.** If you find yourself about to run `Bash({command: "tm ..."})` or `Bash({command: "/tm ..."})`, that will fail with `command not found`. Invoke via the `SlashCommand` tool instead — e.g. `SlashCommand({ command: "/tm search <query>" })`. For the curl-based HTTP fallback, see the canonical SKILL.md's "AI Behavior — `/tm` is a slash command" section.
+> `/tm` 是 Agent 的 slash command。安装原生 Python CLI 后，shell 中也可使用 `tm`；两者共用同一份配置。未安装 CLI 时使用 canonical skill 提供的 HTTP 包装脚本，不要假定 shell 命令存在。
 
 ## How to execute
 
