@@ -17,6 +17,8 @@ def main():
   if set(a.users)!={u.pw_name for u in users}:raise SystemExit('A requested user has no discoverable agent home')
  plan=[{'user':u.pw_name,'home':u.pw_dir,'agents':[n for n,d in AGENTS.items() if (pathlib.Path(u.pw_dir)/d).exists()]} for u in users]
  if not a.apply:print(json.dumps({'dry_run':True,'users':plan},indent=2));return
+ check=subprocess.run([sys.executable,'-m','ensurepip','--version'],capture_output=True)
+ if check.returncode:raise SystemExit(f'Python venv support is missing; install python{sys.version_info.major}.{sys.version_info.minor}-venv before applying')
  launcher=pathlib.Path('/usr/local/bin/tm')
  launcher_body='''#!/usr/bin/env python3
 # Managed Transcendence Memory CLI launcher.

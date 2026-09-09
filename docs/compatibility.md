@@ -58,3 +58,5 @@ previews existing agent users. Add `--apply` to update the complete skill and
 that already exist. Independent copies are backed up, credentials/rules remain
 unchanged, and `/usr/local/bin/tm` selects each user's own managed runtime.
 It refuses to replace an unrelated executable with the same name.
+
+On Debian/Ubuntu, install the matching `python3.x-venv` package first. The global installer checks this prerequisite before changing discovery entries.
