@@ -49,3 +49,12 @@ Write timeouts/5xx are not replayed. TLS verification remains enabled.
 Rollback: `python3 scripts/install.py --rollback` restores the previous skill/runtime
 manifest, or removes the first managed install. Config files and backups remain.
 It refuses to discard edited installed files.
+
+## Linux device-wide update
+
+`sudo python3 scripts/install-linux-global.py --cli-source /path/to/cli.whl`
+previews existing agent users. Add `--apply` to update the complete skill and
+`tm` alias for Codex, Gemini, Claude, Cursor, OpenCode and Antigravity entries
+that already exist. Independent copies are backed up, credentials/rules remain
+unchanged, and `/usr/local/bin/tm` selects each user's own managed runtime.
+It refuses to replace an unrelated executable with the same name.
