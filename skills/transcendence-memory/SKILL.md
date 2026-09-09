@@ -35,7 +35,7 @@ Or use the GUI: run `/plugin` to open the plugin manager → **Discover** tab �
 **After install, restart Claude Code.** `/reload-plugins` loads hooks + skill body into context but does **not** rebuild the slash-command parser (known issue [anthropics/claude-code#37862](https://github.com/anthropics/claude-code/issues/37862)) — `/tm` / `/transcendence-memory` slash commands will only register after a full restart. The four lifecycle hooks (SessionStart / UserPromptSubmit / PostToolUse / Stop) are active immediately on next launch.
 
 > Updating later: `/plugin update transcendence-memory@transcendence-memory` (Claude Code manages the cache).
-> Or use the bundled `/tm upgrade` command, which `git pull --ff-only`s the installed clone (see Gotchas if it reports `fast-forward` failure).
+> Or use the bundled `/tm upgrade` command, which uses the managed install manifest to update the separate source checkout (see installation compatibility).
 
 ### Other agents (Cursor / Codex / manual git clone)
 
@@ -54,7 +54,7 @@ cd ~/src/transcendence-memory
 python3 scripts/install.py --agents codex gemini
 ```
 
-> Cursor's directory is `~/.cursor/skills/`; consult your agent's docs for the canonical path. `/tm upgrade` auto-detects the install root from a list of well-known paths.
+> Cursor's directory is `~/.cursor/skills/`; consult your agent's docs for the canonical path. For managed installs, `/tm upgrade` reads the checkout path from `~/.transcendence-memory/install.json`.
 
 ## Principles
 
@@ -280,7 +280,7 @@ Self-hosted autonomous memory-governance subsystem. **All dry-run-first and safe
 | `update` / `delete` 之后 `/search` 看不到改动 | LanceDB index 没 rebuild | `/tm embed` 刷新（异步入队，duplicate calls 自动 coalesce） |
 | `/jobs/{pid}` 取不到 `.status` 字段 | 顶层没有 `status`；字段是 `running` / `exit_code` | 直接读 `running` / `exit_code`；或用 `/tm jobs` 走本地 ledger |
 | 明文 `sk-...` / `ghp_...` / `xoxb-...` 进了 memory | hooks 已自动 redact，但 batch / 自定义脚本绕过 | 调 `redact_secrets()`（`hooks/common.sh`）或 `batch-ingest.py --redact` |
-| `/tm upgrade` 报 `fatal: Not possible to fast-forward` | 本地有 cherry-pick shadow 或 divergence | `git tag backup/pre-upgrade-$(date +%Y%m%d) HEAD && git reset --hard origin/main`（完全可回退） |
+| `/tm upgrade` 报 `fatal: Not possible to fast-forward` | 本地有 cherry-pick shadow 或 divergence | 保留当前文件与分支，检查 `git status` 和提交分叉；不要自动 reset。受管安装使用 `scripts/install.py --update`，检测到本地修改即停止 |
 | recall / search 查不到老知识但记得写过 | 标题用了 ASCII id 不是模糊自然语言 | 按本文 `## Behavior Conventions §3` 的 Title + trigger-words 模板写；老记忆 retrofit 用索引卡补一层（`references/best-practices.<lang>.md §8`） |
 | `/health` / `/search` 回 `200` 但服务其实没就绪 | 冷启动（切换/重启后）body 携带 `degraded:true` / `per_container_status: timeout\|not_initialized` / `initialized:false`，**200 ≠ 成功** | **解析 body**，命中冷启动信号就把同一查询短间隔重发几次直到 ok（`tm-search.sh` 已自动做）。`curl --retry` 抓不到（200 在它眼里就是成功） |
 | 单容器查询无故 `degraded:true` | 默认 `union:false`；但一旦走 union，存在却未 embed 的 sibling（如 `*_openai`）会把整次检索拖成 degraded | 主容器结果其实正常——本次显式传 `"union":false` 跳过 sibling，或先给 sibling 跑一次 `/embed` 再 union（v0.18 起 server 会自动**软跳过**未 embed 的 sibling，见下条） |

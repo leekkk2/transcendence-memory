@@ -27,6 +27,7 @@ def install(args):
     for item in ['SKILL.md','references/api-reference.md','scripts/tm-search.sh','scripts/redact.py']:
         if not (source/item).is_file():raise RuntimeError('Incomplete skill checkout: '+item)
     manifest=state/'install.json'
+    args.agents=args.agents or (json.loads(manifest.read_text())['agents'] if manifest.exists() else ['codex','gemini'])
     if target.exists() and not manifest.exists() and not args.replace_existing:
         raise RuntimeError('Existing unmanaged skill; use --replace-existing after review (a backup will be retained)')
     # Verify all entry conflicts before replacing a working installation.
@@ -117,7 +118,7 @@ def rollback(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--home',default=str(pathlib.Path.home()))
-    p.add_argument('--agents',nargs='+',choices=['codex','gemini','claude'],default=['codex','gemini'])
+    p.add_argument('--agents',nargs='+',choices=['codex','gemini','claude'],default=None)
     p.add_argument('--cli-source');p.add_argument('--skip-cli',action='store_true');p.add_argument('--update',action='store_true');p.add_argument('--replace-existing',action='store_true');p.add_argument('--allow-dirty',action='store_true')
     p.add_argument('--rollback',action='store_true',help='Restore previous install or remove first managed install; preserve backups and config')
     args=p.parse_args()
