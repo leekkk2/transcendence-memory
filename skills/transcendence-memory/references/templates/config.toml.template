@@ -3,7 +3,8 @@
 # 权限：chmod 600
 
 [connection]
-endpoint = "https://your-memory-endpoint.example.com"  # 后端服务地址
+endpoint = "https://your-memory-endpoint.example.com"  # 后端服务地址（单节点）
+# endpoints = ["https://primary.example.com", "https://backup.example.com"]  # 多节点集群/容灾配置（支持自动 Failover）
 container = "your-container-name"                        # 命名空间（如 home、work、lab）
 
 [auth]
