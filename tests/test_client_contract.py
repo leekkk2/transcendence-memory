@@ -42,4 +42,43 @@ class ClientContract(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stderr);self.assertIn('vector_distance↓=0',result.stdout);self.assertIn('rerank_relevance↑=0',result.stdout)
             body=json.loads(capture.read_text());self.assertIs(body['rerank'],True);self.assertEqual(body['score_threshold'],.8)
 
+    def test_multi_service_node_failover_and_search_options(self):
+        if os.name=='nt':self.skipTest('Native Windows launchers tested separately')
+        with tempfile.TemporaryDirectory() as tmp:
+            p=pathlib.Path(tmp);bin=p/'bin';bin.mkdir();cfg=p/'config.toml'
+            cfg.write_text('[connection]\nendpoints=["https://failed.invalid","https://working.invalid"]\ncontainer="main"\n[auth]\napi_key="fixture"\n')
+            capture=p/'request.json'
+            curl=bin/'curl';curl.write_text('#!/usr/bin/env python3\nimport sys,json,os\nurl=sys.argv[sys.argv.index("-X")+2]\nif "failed.invalid" in url:\n    sys.exit(7)\nbody=sys.stdin.read()\nopen(os.environ["CAPTURE"],"w").write(body)\nprint(json.dumps({"status":"ok","initialized":True,"degraded":False,"rerank_applied":True,"per_container_status":{"worker":"ok"},"results":[]}))\nprint("200")\n');curl.chmod(0o755)
+            env={**os.environ,'PATH':str(bin)+os.pathsep+os.environ['PATH'],'TM_CONFIG_FILE':str(cfg),'CAPTURE':str(capture)}
+            result=subprocess.run(['bash',str(ROOT/'skills/transcendence-memory/scripts/tm-search.sh'),'search','--container','worker','--union','多节点测试'],capture_output=True,text=True,env=env)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn("failing over to next node",result.stderr)
+            body=json.loads(capture.read_text())
+            self.assertEqual(body['container'],'worker')
+            self.assertIs(body['union'],True)
+
+    def test_multi_node_remember_tagging(self):
+        if os.name=='nt':self.skipTest('Native Windows launchers tested separately')
+        with tempfile.TemporaryDirectory() as tmp:
+            p=pathlib.Path(tmp);bin=p/'bin';bin.mkdir();cfg=p/'config.toml'
+            cfg.write_text('[connection]\nendpoint="https://working.invalid"\ncontainer="main"\n[auth]\napi_key="fixture"\n')
+            capture=p/'remember.json'
+            curl=bin/'curl';curl.write_text('#!/usr/bin/env python3\nimport sys,json,os\nbody=sys.stdin.read()\nopen(os.environ["CAPTURE"],"w").write(body)\nprint(json.dumps({"status":"ok","object_ids":["obj-1"],"index_status":"queued"}))\nprint("200")\n');curl.chmod(0o755)
+            env={**os.environ,'PATH':str(bin)+os.pathsep+os.environ['PATH'],'TM_CONFIG_FILE':str(cfg),'CAPTURE':str(capture)}
+            # 1. With explicit --node
+            res1=subprocess.run(['bash',str(ROOT/'skills/transcendence-memory/scripts/tm-remember.sh'),'测试节点记忆','--node','eva-node','--tags','infra'],capture_output=True,text=True,env=env)
+            self.assertEqual(res1.returncode,0,res1.stderr)
+            body1=json.loads(capture.read_text())
+            tags1=body1['objects'][0]['tags']
+            self.assertIn('node:eva-node',tags1)
+            self.assertIn('infra',tags1)
+            self.assertIn('node=eva-node',res1.stdout)
+            # 2. With --no-node
+            res2=subprocess.run(['bash',str(ROOT/'skills/transcendence-memory/scripts/tm-remember.sh'),'测试通用记忆','--no-node','--tags','infra'],capture_output=True,text=True,env=env)
+            self.assertEqual(res2.returncode,0,res2.stderr)
+            body2=json.loads(capture.read_text())
+            tags2=body2['objects'][0]['tags']
+            self.assertNotIn('node:',str(tags2))
+
 if __name__=='__main__':unittest.main()
+

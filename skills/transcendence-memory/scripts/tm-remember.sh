@@ -36,9 +36,17 @@ set -euo pipefail
 # default tool UAs (curl/*). A stable named UA is allowlisted.
 readonly USER_AGENT="transcendence-memory-skill/0.7"
 
+# Source dynamic project/node route hook before evaluating CONFIG_FILE
+ROUTE_HOOK="${TM_ROUTE_SCRIPT:-$HOME/.transcendence-memory/project-route.sh}"
+if [[ -f "$ROUTE_HOOK" ]]; then
+  # shellcheck source=/dev/null
+  source "$ROUTE_HOOK" 2>/dev/null || true
+fi
+
 # Config location. Overridable via env only for testing; defaults to the path
 # every other skill command reads.
 readonly CONFIG_FILE="${TM_CONFIG_FILE:-$HOME/.transcendence-memory/config.toml}"
+
 
 # Per-request budgets:
 #   connect 5s  : behind a dead proxy a connect can otherwise hang for minutes.
@@ -82,37 +90,43 @@ toml_get() {
     | sed -E 's/^[^=]*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//; s/[[:space:]]*$//'
 }
 
-load_config() {
-  [[ -f "$CONFIG_FILE" ]] || {
-    err "config not found: $CONFIG_FILE"
-    err "run '/tm connect <token>' or '/tm connect --manual' to create it."
-    exit "$EX_CONFIG"
-  }
+parse_endpoints() {
+  local raw=""
+  if [[ -n "${TM_ENDPOINTS:-}" ]]; then
+    raw="$TM_ENDPOINTS"
+  elif [[ -n "${TM_ENDPOINT:-}" ]]; then
+    raw="$TM_ENDPOINT"
+  else
+    local arr_line
+    arr_line="$(grep -E "^[[:space:]]*endpoints[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 || true)"
+    if [[ -n "$arr_line" ]]; then
+      raw="$(printf '%s' "$arr_line" | sed -E 's/^[^=]*=[[:space:]]*//; s/^[[:space:]]*\[//; s/\][[:space:]]*$//' | tr -d '"'\''')"
+    else
+      raw="$(toml_get endpoint)"
+    fi
+  fi
 
-  ENDPOINT="$(toml_get endpoint)"
-  API_KEY="$(toml_get api_key)"
-  CONTAINER_CFG="$(toml_get container)"
+  ENDPOINTS=()
+  local IFS=', '
+  for ep in $raw; do
+    ep="$(printf '%s' "$ep" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [[ -n "$ep" ]] && ENDPOINTS+=("${ep%/}")
+  done
 
-  if [[ -z "$ENDPOINT" ]]; then
+  if [[ ${#ENDPOINTS[@]} -eq 0 ]]; then
     err "missing 'endpoint' in $CONFIG_FILE — re-run /tm connect."
     exit "$EX_CONFIG"
   fi
-  if [[ -z "$API_KEY" ]]; then
-    err "missing 'api_key' in $CONFIG_FILE — re-run /tm connect."
-    exit "$EX_CONFIG"
-  fi
+  ENDPOINT="${ENDPOINTS[0]}"
+}
 
-  # Strip a trailing slash so "$ENDPOINT/ingest-memory/objects" never doubles up.
-  ENDPOINT="${ENDPOINT%/}"
-
-  # Derive host for --noproxy from the endpoint URL (pure bash, no subprocess —
-  # never leaks the key).
+configure_endpoint_routing() {
+  local target_ep="$1"
+  ENDPOINT="${target_ep%/}"
   local no_scheme="${ENDPOINT#*://}"
   no_scheme="${no_scheme%%/*}"
   ENDPOINT_HOST="${no_scheme%%:*}"
 
-  # Proxy routing: same two-path model as tm-search.sh (see its load_config for
-  # the full rationale). TM_NO_PROXY=1 forces direct-only.
   TRANSPORT_MODE="${TM_TRANSPORT_MODE:-$(toml_get transport_mode || :)}"
   TRANSPORT_MODE="${TRANSPORT_MODE:-auto}"
   case "$TRANSPORT_MODE" in auto|direct|proxy) ;; *) err "invalid transport_mode"; exit "$EX_CONFIG" ;; esac
@@ -131,6 +145,25 @@ load_config() {
   fi
 }
 
+load_config() {
+  [[ -f "$CONFIG_FILE" ]] || {
+    err "config not found: $CONFIG_FILE"
+    err "run '/tm connect <token>' or '/tm connect --manual' to create it."
+    exit "$EX_CONFIG"
+  }
+
+  parse_endpoints
+  API_KEY="$(toml_get api_key)"
+  CONTAINER_CFG="$(toml_get container)"
+
+  if [[ -z "$API_KEY" ]]; then
+    err "missing 'api_key' in $CONFIG_FILE — re-run /tm connect."
+    exit "$EX_CONFIG"
+  fi
+
+  configure_endpoint_routing "$ENDPOINT"
+}
+
 # Self-contained secret redaction (mirror of hooks/common.sh redact_secrets —
 # duplicated because a bare skill install ships scripts/ without hooks/).
 # Covers: OpenAI/Anthropic sk-*, Stripe pk_live_/sk_live_, Slack xoxb-/xoxp-,
@@ -141,53 +174,103 @@ redact_secrets() {
   python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redact.py"
 }
 
-# POST helper — same shape as tm-search.sh's http_post_json minus --retry (see
-# write-path discipline in the header). Direct fallback fires ONLY on curl 6/7
-# (connection never established → replay is safe); a 28 timeout is NOT replayed
-# because the request may have reached the server.
+# Detect local node / host identifier for multi-node provenance
+detect_node_name() {
+  if [[ -n "${TM_NODE_NAME:-}" ]]; then
+    printf '%s' "$TM_NODE_NAME"
+    return 0
+  fi
+  local h=""
+  if command -v hostname >/dev/null 2>&1; then
+    h="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  fi
+  if [[ -z "$h" && -f /etc/hostname ]]; then
+    h="$(cat /etc/hostname 2>/dev/null || true)"
+  fi
+  # sanitize: lowercase alphanumeric and dash
+  h="$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
+  h="${h#-}"
+  h="${h%-}"
+  printf '%s' "${h:-unknown-node}"
+}
+
+# POST helper with auto-failover across service nodes.
 http_post_json() {
-  local url="$1" max_time="$2"
-  local payload out rc
+  local target_path="$1" max_time="$2"
+  local payload
   payload="$(cat)"
 
-  _post_once() {  # $1 = connect-timeout override (empty = default); $@ rest = noproxy args
-    local ct="$1"; shift
-    local extra=()
-    [[ -n "$ct" ]] && extra+=(--connect-timeout "$ct")
-    set +e
-    # bash-3.2-safe empty-array expansion under set -u.
-    out="$(
-      printf '%s' "$payload" | curl -sS -X POST "$url" \
-        --connect-timeout "$CONNECT_TIMEOUT" \
-        --max-time "$max_time" \
-        --fail-with-body \
-        ${extra[@]+"${extra[@]}"} \
-        "$@" \
-        -A "$USER_AGENT" \
-        -H "X-API-KEY: $API_KEY" \
-        -H "Content-Type: application/json" \
-        -w $'\n%{http_code}' \
-        --data @-
-    )"
-    rc=$?
-    set -e
-  }
-
-  if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
-    _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
-  else
-    _post_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
-    local http_probe="${out##*$'\n'}"
-    if [[ "$TRANSPORT_MODE" != "proxy" && ( "$rc" -eq 6 || "$rc" -eq 7 ) && ( -z "$http_probe" || "$http_probe" == "000" ) ]]; then
-      err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
-      _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
-    fi
+  # Normalize path: extract URI path if full URL was provided for backward compatibility
+  if [[ "$target_path" =~ ^https?:// ]]; then
+    local no_proto="${target_path#*://}"
+    target_path="/${no_proto#*/}"
   fi
 
-  LAST_HTTP="${out##*$'\n'}"
-  LAST_BODY="${out%$'\n'*}"
-  if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
-  LAST_CURL_RC="$rc"
+
+  _post_to_endpoint() {
+    local target_url="$1"
+    local out rc
+    _post_once() {
+      local ct="$1"; shift
+      local extra=()
+      [[ -n "$ct" ]] && extra+=(--connect-timeout "$ct")
+      set +e
+      out="$(
+        printf '%s' "$payload" | curl -sS -X POST "$target_url" \
+          --connect-timeout "$CONNECT_TIMEOUT" \
+          --max-time "$max_time" \
+          --fail-with-body \
+          ${extra[@]+"${extra[@]}"} \
+          "$@" \
+          -A "$USER_AGENT" \
+          -H "X-API-KEY: $API_KEY" \
+          -H "Content-Type: application/json" \
+          -w $'\n%{http_code}' \
+          --data @-
+      )"
+      rc=$?
+      set -e
+    }
+
+    if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
+      _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+    else
+      _post_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
+      local http_probe="${out##*$'\n'}"
+      if [[ "$TRANSPORT_MODE" != "proxy" && ( "$rc" -eq 6 || "$rc" -eq 7 ) && ( -z "$http_probe" || "$http_probe" == "000" ) ]]; then
+        err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
+        _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+      fi
+    fi
+
+    LAST_HTTP="${out##*$'\n'}"
+    LAST_BODY="${out%$'\n'*}"
+    if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
+    LAST_CURL_RC="$rc"
+  }
+
+  local ep_count=${#ENDPOINTS[@]}
+  local idx=0
+  while [[ $idx -lt $ep_count ]]; do
+    local current_ep="${ENDPOINTS[$idx]}"
+    configure_endpoint_routing "$current_ep"
+    local full_url="${ENDPOINT%/}${target_path}"
+
+    _post_to_endpoint "$full_url"
+
+    # Success or client error (4xx like 401/422): definitive response, stop failover
+    if [[ "$LAST_CURL_RC" -eq 0 && "$LAST_HTTP" =~ ^[234] ]]; then
+      return 0
+    fi
+
+    # Connection failure (6, 7, 28) or server error (5xx)
+    if [[ $((idx + 1)) -lt $ep_count ]]; then
+      err "note: service node '$current_ep' unreachable or error (curl exit $LAST_CURL_RC, HTTP ${LAST_HTTP:-none}); failing over to next node '${ENDPOINTS[$((idx + 1))]}'."
+      idx=$((idx + 1))
+      continue
+    fi
+    break
+  done
 }
 
 # Map curl exit / HTTP status to an exit code with a next-step hint.
@@ -234,7 +317,8 @@ classify_and_exit() {
 usage() {
   cat >&2 <<EOF
 tm-remember.sh — quick memory store (POST /ingest-memory/objects) with jq-built
-JSON (no hand-escaping 422s), built-in secret redaction, and proxy auto-fallback.
+JSON (no hand-escaping 422s), built-in secret redaction, proxy auto-fallback,
+and multi-service-node automatic failover.
 
 Usage:
   $0 "memory text" [options]
@@ -242,6 +326,8 @@ Usage:
 Options:
   --title <t>        Optional title (also redacted).
   --tags a,b,c       Comma-separated tags.
+  --node <n>         Node origin identifier (default: auto-detected hostname).
+  --no-node          Disable automatic node origin tagging (pure single-node mode).
   --container <c>    Override the config.toml container.
   --id <mem-x>       Client memory id (default: mem-<epoch>-<rand>).
   --no-embed         Skip auto_embed (you must POST /embed later yourself).
@@ -249,6 +335,8 @@ Options:
 
 Env overrides:
   TM_CONFIG_FILE     config path (default ~/.transcendence-memory/config.toml)
+  TM_ENDPOINTS       failover endpoints list (comma-separated, e.g. "https://ep1,https://ep2")
+  TM_NODE_NAME       override auto-detected node name
   TM_NO_PROXY=1      force direct-only (--noproxy); default = proxy-first +
                      auto direct fallback on connection failure
   TM_DIRECT_CONNECT_TIMEOUT   direct-fallback connect-timeout s (default $DIRECT_FALLBACK_CONNECT_TIMEOUT)
@@ -267,6 +355,7 @@ main() {
   require_cmd python3
 
   local text="" title="" tags_csv="" container_override="" mem_id="" auto_embed=true json_out=0
+  local node_arg="" no_node=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -274,6 +363,9 @@ main() {
                    title="$2"; shift 2 ;;
       --tags)      [[ $# -ge 2 ]] || { err "--tags needs a value"; exit "$EX_USAGE"; }
                    tags_csv="$2"; shift 2 ;;
+      --node)      [[ $# -ge 2 ]] || { err "--node needs a value"; exit "$EX_USAGE"; }
+                   node_arg="$2"; shift 2 ;;
+      --no-node)   no_node=1; shift ;;
       --container) [[ $# -ge 2 ]] || { err "--container needs a value"; exit "$EX_USAGE"; }
                    container_override="$2"; shift 2 ;;
       --id)        [[ $# -ge 2 ]] || { err "--id needs a value"; exit "$EX_USAGE"; }
@@ -307,6 +399,18 @@ main() {
     err "warning: no 'container' in config; falling back to server default 'home'."
     container="home"
   fi
+
+  local active_node=""
+  if [[ "$no_node" -eq 0 ]]; then
+    active_node="${node_arg:-$(detect_node_name)}"
+    if [[ -n "$active_node" ]]; then
+      local node_tag="node:${active_node}"
+      if [[ ",${tags_csv}," != *",${node_tag},"* ]]; then
+        [[ -n "$tags_csv" ]] && tags_csv="${tags_csv},${node_tag}" || tags_csv="${node_tag}"
+      fi
+    fi
+  fi
+
 
 derive_semantic_id() {
   local t="$1" tags="$2" txt="$3"
@@ -395,8 +499,11 @@ PY
     [[ "$auto_embed" == "true" ]] && embed_state="$(jq -r ' .index_status // "unknown" ' <<<"$LAST_BODY")"
     local disp_title="${title:-${text:0:36}...}"
     local disp_tags="${tags_csv:-none}"
-    printf 'stored: container=%s title="%s" tags=[%s] embed=%s (id=%s)\n' \
-      "$container" "$disp_title" "$disp_tags" "$embed_state" "$mem_id"
+    local node_str=""
+    [[ -n "$active_node" ]] && node_str=" node=$active_node"
+    printf 'stored: container=%s%s title="%s" tags=[%s] embed=%s (id=%s)\n' \
+      "$container" "$node_str" "$disp_title" "$disp_tags" "$embed_state" "$mem_id"
+
   fi
 }
 

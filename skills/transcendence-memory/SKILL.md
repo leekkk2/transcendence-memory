@@ -145,6 +145,19 @@ See `references/best-practices.<lang>.md` §9 for the full redaction checklist.
   ```
   系统将自动将记忆归档于当前主容器（默认为 `main`），无需关心内部 ID。
 
+### 6. Multi-Node Resilience & Node Attribution (单服务/多服务节点自动适配与节点溯源)
+
+为了适应多服务节点高可用部署与跨客户端节点分布式协同，技能全面支持弹性故障转移与节点感知：
+- **单服务/多服务节点自动适配 (Single/Multi Server Nodes Auto-Adaptation)**：
+  - **零改动单节点兼容**：沿用单端点配置（`endpoint = "https://..."`）时，系统保持纯粹的单端点请求，零冗余开销，100% 向后兼容。
+  - **多服务节点与故障转移 (Failover)**：当配置了多个端点（`endpoints = ["https://ep1", "https://ep2"]` 或环境变量 `TM_ENDPOINTS="ep1,ep2"`）时，HTTP 传输层在遇到连接失败（如 curl exit code 6/7/28）或服务端 5xx 故障时，自动故障转移至下一个候选服务节点重试，并即时完成请求。
+  - **动态项目路由**：自动检测并加载 `~/.transcendence-memory/project-route.sh` 或 `$TM_ROUTE_SCRIPT`，支持根据当前工程目录动态覆盖目标端点与容器。
+- **客户端节点感知与协同 (Client Node Attribution & Topology)**：
+  - **记忆写入时自动节点打标**：`tm-remember.sh` 会自动推断当前环境的主机名，向记忆 tags 中注入 `node:<hostname>`（如 `node:mac-m3`），方便跨设备检索时定位知识产生来源；支持使用 `--node <name>` 显式指定，或使用 `--no-node` 禁用注入。
+  - **动态容器检索与跨容器联合**：`tm-search.sh search` 新增 `-c|--container <name>` 参数动态覆盖当前容器，并支持 `--union` / `--no-union` 参数控制是否联合检索相关联的辅助向量容器。
+  - **拓扑与健康探测**：`tm-search.sh status` 会自动遍历探测所有配置的服务节点健康状态并汇总；`tm-search.sh node`（别名 `nodes`, `info`）可一键查看本机客户端环境、活跃服务端点、多节点拓扑与默认容器。
+
+
 ## AI Behavior — `/tm` is a slash command, not a bare shell binary (STRICT)
 
 `/tm` is a Claude Code **slash command** invoked through the `SlashCommand` tool.
@@ -161,12 +174,13 @@ A separate, **optional** shell CLI named `tm` does exist (`pipx install transcen
 
 1. **Preferred — bundled wrapper script** (works on any agent — Claude / Gemini / Codex — in or out of Claude Code):
    ```bash
-   bash scripts/tm-search.sh search <query>     # semantic recall over the configured container
-   bash scripts/tm-search.sh query <q>          # multimodal RAG query
-   bash scripts/tm-search.sh status             # one-line health probe
-   bash scripts/tm-search.sh containers [pat]   # list containers (name/objects/index state)
-   bash scripts/tm-search.sh jobs <id>          # one job's state in plain words
-   bash scripts/tm-remember.sh "text" [--title t] [--tags a,b]   # quick memory store (jq-built JSON + secret redaction)
+   bash scripts/tm-search.sh search <query> [-c container] [--union] # semantic recall over configured/specified container
+   bash scripts/tm-search.sh query <q>                               # multimodal RAG query
+   bash scripts/tm-search.sh status                                  # health probe across single or multi-server nodes
+   bash scripts/tm-search.sh node                                    # inspect client environment, endpoints & topology
+   bash scripts/tm-search.sh containers [pat]                        # list containers (name/objects/index state)
+   bash scripts/tm-search.sh jobs <id>                               # one job's state in plain words
+   bash scripts/tm-remember.sh "text" [--title t] [--tags a,b] [--node name|--no-node] # memory store with node attribution
    ```
    It reads `~/.transcendence-memory/config.toml`, builds the JSON body zsh-glob-safely (jq + heredoc, never bare braces), adds a WAF-compatible User-Agent, honors `*_PROXY` with auto-fallback to direct, and lazily absorbs a cold-start backend on first call — so agents don't need the optional `tm` CLI installed, and never need a (nonexistent) `tm-codex` binary. (No separate warm-up SOP — warm-up is handled inside the script.)
 
@@ -218,11 +232,12 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 |------|------|------|
 | `connect <token>` | Import a connection token and write local config | `/tm connect eyJlbmRw...` |
 | `connect --manual` | Enter endpoint, api_key, and container manually | `/tm connect --manual` |
-| `status` | Check connection status and server health | `/tm status` |
-| `search <query>` | Run semantic search over memories | `/tm search architecture decision from the last deployment` |
+| `status` | Check connection status and server health (probes all configured endpoints) | `/tm status` |
+| `node` | Inspect client environment, host platform, active endpoints and topology | `/tm node` |
+| `search <query>` | Run semantic search over memories (`-c <container>`, `--union`/`--no-union`) | `/tm search architecture decision from the last deployment` |
 | `search --match <pattern> <query>` | Search across all containers whose name fuzzy-matches `<pattern>` | `/tm search --match my-project docker compose` |
 | `search --all <query>` | Search across **every** container at once | `/tm search --all release notes` |
-| `remember <text>` | Store one memory quickly (preferred wrapper: `bash scripts/tm-remember.sh "<text>"` — jq-built JSON, no hand-escaping 422s, built-in secret redaction) | `/tm remember Port conflicts caused the deployment failure` |
+| `remember <text>` | Store one memory quickly (`--title t`, `--tags a,b`, `--node name`/`--no-node`) | `/tm remember Port conflicts caused the deployment failure` |
 | `update <id> <text>` | Update an existing memory's text in the current container | `/tm update mem-001 New corrected content` |
 | `embed` | Rebuild the index for the current container | `/tm embed` |
 | `query <question>` | Run a multimodal RAG query and get an LLM-generated answer | `/tm query What is the overall project architecture?` |
@@ -291,6 +306,7 @@ Self-hosted autonomous memory-governance subsystem. **All dry-run-first and safe
 | `fallback_rendered` 非 null / 答案像"模板话术" | v0.19.0 opt-in 兜底模板：score-gate 全拦或全容器降级、且运维配了 `fallback_template` 时渲染 | **别当高置信检索结果**呈现；默认未配模板时此字段恒 `null`，无需关注 |
 | 服务**拒绝启动**，日志打 `FATAL: EMBEDDING_DIM=X disagrees with LanceDB schemas` | 启动期 dim 一致性闸（v0.18 已在 prod）：`.env` 的 `EMBEDDING_DIM` 与已落库容器的 vec 列维度不符——历史上曾静默错配致 `/search` 连续 14h 报 dim 错。守卫宁可不启动也不放行 | 把 `EMBEDDING_DIM`/`EMBEDDING_MODEL` 对齐已存维度，或用新 model 重建受影响容器；**确在迁移途中**才临时 `TM_ALLOW_DIM_DRIFT=1` 跳过。这是 server 端 env，不在本 skill 配置 |
 | 有全局代理时直连超时 / 或反过来代理不通 | endpoint 常被 Cloudflare fronting：某些机器上 env 代理才是快且可靠的路径（GFW 区直连可能 ~12s 超时），另一些机器反之 | 别预设"代理 = 问题"。`tm-search.sh` 默认走 `*_PROXY`、连接失败再自动回退直连；`TM_NO_PROXY=1` 强制直连 |
+| 多端点 Failover 时某个节点 5xx / 网络超时 | 集群中某个服务节点宕机、冷启动或网络闪断 | 传输层已内建自适应 Failover，遇到连接失败或 5xx 自动按顺序切换至下一个备选服务节点重试；可通过 `bash scripts/tm-search.sh status` 统一排查各节点连通性 |
 
 > **黄金法则**：HTTP 200 ≠ 业务完成。所有写路径（`/embed` / `/documents/*` / `/upload`）都是 fire-and-forget；只有 `/search` 同步。冷启动时连读路径的 200 都可能携带 degraded body——务必解析。
 

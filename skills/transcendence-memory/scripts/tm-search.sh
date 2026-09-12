@@ -40,9 +40,17 @@ set -euo pipefail
 # suffix if the WAF policy ever needs to distinguish skill versions.
 readonly USER_AGENT="transcendence-memory-skill/0.5"
 
+# Source dynamic project/node route hook before evaluating CONFIG_FILE
+ROUTE_HOOK="${TM_ROUTE_SCRIPT:-$HOME/.transcendence-memory/project-route.sh}"
+if [[ -f "$ROUTE_HOOK" ]]; then
+  # shellcheck source=/dev/null
+  source "$ROUTE_HOOK" 2>/dev/null || true
+fi
+
 # Config location. Overridable via env only for testing; defaults to the path
 # every other skill command reads.
 readonly CONFIG_FILE="${TM_CONFIG_FILE:-$HOME/.transcendence-memory/config.toml}"
+
 
 # Idempotent-read curl resilience flags. Rationale per flag:
 #   --connect-timeout 5 : TCP/TLS connect must complete in 5s; behind a dead
@@ -126,66 +134,43 @@ toml_get() {
     | sed -E 's/^[^=]*=[[:space:]]*//; s/^"//; s/"[[:space:]]*$//; s/[[:space:]]*$//'
 }
 
-load_config() {
-  [[ -f "$CONFIG_FILE" ]] || {
-    err "config not found: $CONFIG_FILE"
-    err "run '/tm connect <token>' or '/tm connect --manual' to create it."
-    exit "$EX_CONFIG"
-  }
+parse_endpoints() {
+  local raw=""
+  if [[ -n "${TM_ENDPOINTS:-}" ]]; then
+    raw="$TM_ENDPOINTS"
+  elif [[ -n "${TM_ENDPOINT:-}" ]]; then
+    raw="$TM_ENDPOINT"
+  else
+    local arr_line
+    arr_line="$(grep -E "^[[:space:]]*endpoints[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 || true)"
+    if [[ -n "$arr_line" ]]; then
+      raw="$(printf '%s' "$arr_line" | sed -E 's/^[^=]*=[[:space:]]*//; s/^[[:space:]]*\[//; s/\][[:space:]]*$//' | tr -d '"'\''')"
+    else
+      raw="$(toml_get endpoint)"
+    fi
+  fi
 
-  ENDPOINT="$(toml_get endpoint)"
-  API_KEY="$(toml_get api_key)"
-  CONTAINER="$(toml_get container)"
+  ENDPOINTS=()
+  local IFS=', '
+  for ep in $raw; do
+    ep="$(printf '%s' "$ep" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [[ -n "$ep" ]] && ENDPOINTS+=("${ep%/}")
+  done
 
-  # endpoint and api_key are mandatory; container has a server-side default
-  # ("home") so we only warn if absent.
-  if [[ -z "$ENDPOINT" ]]; then
+  if [[ ${#ENDPOINTS[@]} -eq 0 ]]; then
     err "missing 'endpoint' in $CONFIG_FILE — re-run /tm connect."
     exit "$EX_CONFIG"
   fi
-  if [[ -z "$API_KEY" ]]; then
-    err "missing 'api_key' in $CONFIG_FILE — re-run /tm connect."
-    exit "$EX_CONFIG"
-  fi
-  if [[ -z "$CONTAINER" ]]; then
-    err "warning: no 'container' in config; falling back to server default 'home'."
-    CONTAINER="home"
-  fi
+  ENDPOINT="${ENDPOINTS[0]}"
+}
 
-  # Strip a trailing slash so "$ENDPOINT/search" never doubles up.
-  ENDPOINT="${ENDPOINT%/}"
+configure_endpoint_routing() {
+  local target_ep="$1"
+  ENDPOINT="${target_ep%/}"
+  local no_scheme="${ENDPOINT#*://}"
+  no_scheme="${no_scheme%%/*}"
+  ENDPOINT_HOST="${no_scheme%%:*}"
 
-  # Derive host from the endpoint URL (scheme://host[:port]/...).
-  # Pure bash parameter expansion — no external process, never leaks the key.
-  local no_scheme="${ENDPOINT#*://}"   # strip scheme
-  no_scheme="${no_scheme%%/*}"          # strip path
-  ENDPOINT_HOST="${no_scheme%%:*}"      # strip :port
-
-  # ── Proxy routing model: proxy-first + automatic direct fallback ────────────
-  # WHY DEFAULT TO HONORING THE PROXY (no --noproxy):
-  #   Self-hosted endpoints are typically fronted by Cloudflare. On a GFW-region
-  #   host the machine's localhost proxy (http/SOCKS) is the *reliable* path to
-  #   the Cloudflare edge (~1-1.4s, stable), whereas a DIRECT connection to that
-  #   edge is flaky — empirically a 12s connect-timeout with both edge IPs failing
-  #   (an occasional ~9.5s success). So blindly adding --noproxy on this kind of
-  #   host CUTS THE ONLY WORKING PATH and makes status/search hang. On a host with
-  #   no proxy configured, honoring the (absent) *_PROXY env is a natural direct
-  #   connect, so behavior is unchanged there.
-  #   Security: routing HTTPS through a localhost CONNECT-tunnel proxy is opaque —
-  #   TLS terminates at Cloudflare, the proxy only sees host:443, never the
-  #   X-API-KEY header or request body. No credential exposure.
-  # WHY KEEP A DIRECT FALLBACK:
-  #   The inverse case exists too — a host where a proxy IS set but is broken/down
-  #   while the direct route works. http_post_json/http_get detect a connection-
-  #   class failure (curl exit 7/28) on the proxied attempt and automatically
-  #   retry ONCE with --noproxy '*' (wider connect-timeout, see
-  #   DIRECT_FALLBACK_CONNECT_TIMEOUT) before giving up.
-  # OVERRIDE (two-way switch):
-  #   TM_NO_PROXY=1  → force direct-only (legacy behavior; for hosts where direct
-  #                    is the known-good path and you want to skip the proxy try).
-  #   default        → proxy-first, then direct fallback (covers GFW-region hosts).
-  # NOTE: assembled here (not via a helper returning lines) to stay compatible
-  # with macOS bash 3.2, which has no `mapfile`/`readarray`.
   TRANSPORT_MODE="${TM_TRANSPORT_MODE:-$(toml_get transport_mode || :)}"
   TRANSPORT_MODE="${TRANSPORT_MODE:-auto}"
   case "$TRANSPORT_MODE" in auto|direct|proxy) ;; *) err "invalid transport_mode"; exit "$EX_CONFIG" ;; esac
@@ -197,13 +182,36 @@ load_config() {
     [[ -n "${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-${ALL_PROXY:-${all_proxy:-}}}}}}" ]] || { err "proxy mode requires a proxy environment variable"; exit "$EX_CONFIG"; }
     PROXY_ARGS=(--noproxy "")
   fi
-  # Direct-connect flags reused by the fallback path (and by TM_NO_PROXY=1).
   if [[ -n "${ENDPOINT_HOST:-}" ]]; then
     DIRECT_ARGS=(--noproxy "$ENDPOINT_HOST")
   else
     DIRECT_ARGS=(--noproxy "*")
   fi
 }
+
+load_config() {
+  [[ -f "$CONFIG_FILE" ]] || {
+    err "config not found: $CONFIG_FILE"
+    err "run '/tm connect <token>' or '/tm connect --manual' to create it."
+    exit "$EX_CONFIG"
+  }
+
+  parse_endpoints
+  API_KEY="$(toml_get api_key)"
+  CONTAINER="$(toml_get container)"
+
+  if [[ -z "$API_KEY" ]]; then
+    err "missing 'api_key' in $CONFIG_FILE — re-run /tm connect."
+    exit "$EX_CONFIG"
+  fi
+  if [[ -z "$CONTAINER" ]]; then
+    err "warning: no 'container' in config; falling back to server default 'home'."
+    CONTAINER="home"
+  fi
+
+  configure_endpoint_routing "$ENDPOINT"
+}
+
 
 # Map a curl exit / HTTP status to one of our exit codes, and print a next-step
 # hint. $1 = curl_rc, $2 = http_status (may be empty), $3 = response body.
@@ -264,137 +272,224 @@ is_connection_failure() {
 # connection-class failure we automatically retry ONCE direct (--noproxy '*',
 # wider connect-timeout) — covers the inverse "proxy set but broken, direct OK".
 # TM_NO_PROXY=1 skips straight to the direct attempt (FORCE_DIRECT=1).
-# $1 = url, $2 = max_time; JSON body read from stdin. The body is read into a
-# variable so the SAME payload can be replayed on the fallback attempt.
+# POST helper with auto-failover across service nodes.
 http_post_json() {
-  local url="$1" max_time="$2"
-  local payload out rc
+  local target_path="$1" max_time="$2"
+  local payload
   payload="$(cat)"
 
-  _post_once() {  # $1 = extra connect-timeout (empty = use CURL_RESILIENCE's 5s); $@ rest = noproxy args
-    local ct="$1"; shift
-    local extra=()
-    [[ -n "$ct" ]] && extra+=(--connect-timeout "$ct")
-    set +e
-    # bash-3.2-safe empty-array expansion: "${extra[@]+...}" expands to nothing
-    # (not an unbound-var error under set -u) when extra is empty.
-    out="$(
-      printf '%s' "$payload" | curl -sS -X POST "$url" \
-        "${CURL_RESILIENCE[@]}" \
-        --max-time "$max_time" \
-        ${extra[@]+"${extra[@]}"} \
-        "$@" \
-        -A "$USER_AGENT" \
-        -H "X-API-KEY: $API_KEY" \
-        -H "Content-Type: application/json" \
-        -w $'\n%{http_code}' \
-        --data @-
-    )"
-    rc=$?
-    set -e
-  }
+  if [[ "$target_path" =~ ^https?:// ]]; then
+    local no_proto="${target_path#*://}"
+    target_path="/${no_proto#*/}"
+  fi
 
-  if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
-    # Direct-only (legacy): skip the proxied attempt entirely.
-    _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
-  else
-    # Attempt #1: honor ambient *_PROXY (no --noproxy).
-    _post_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
-    # Attempt #2 (auto): connection-class failure → retry direct.
-    if [[ "$url" != */query ]] && is_connection_failure "$rc" "${out##*$'\n'}"; then
-      err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
+  _post_to_endpoint() {
+    local target_url="$1"
+    local out rc
+    _post_once() {  # $1 = extra connect-timeout (empty = use CURL_RESILIENCE's 5s); $@ rest = noproxy args
+      local ct="$1"; shift
+      local extra=()
+      [[ -n "$ct" ]] && extra+=(--connect-timeout "$ct")
+      set +e
+      out="$(
+        printf '%s' "$payload" | curl -sS -X POST "$target_url" \
+          "${CURL_RESILIENCE[@]}" \
+          --max-time "$max_time" \
+          ${extra[@]+"${extra[@]}"} \
+          "$@" \
+          -A "$USER_AGENT" \
+          -H "X-API-KEY: $API_KEY" \
+          -H "Content-Type: application/json" \
+          -w $'\n%{http_code}' \
+          --data @-
+      )"
+      rc=$?
+      set -e
+    }
+
+    if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
       _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+    else
+      _post_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
+      if [[ "$target_url" != */query ]] && is_connection_failure "$rc" "${out##*$'\n'}"; then
+        err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
+        _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+      fi
     fi
-  fi
 
-  # Last line is the http_code; everything before is the body.
-  LAST_HTTP="${out##*$'\n'}"
-  LAST_BODY="${out%$'\n'*}"
-  # Edge case: empty body -> out is just the code; normalize.
-  if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
-  LAST_CURL_RC="$rc"
+    LAST_HTTP="${out##*$'\n'}"
+    LAST_BODY="${out%$'\n'*}"
+    if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
+    LAST_CURL_RC="$rc"
+  }
+
+  local ep_count=${#ENDPOINTS[@]}
+  local idx=0
+  while [[ $idx -lt $ep_count ]]; do
+    local current_ep="${ENDPOINTS[$idx]}"
+    configure_endpoint_routing "$current_ep"
+    local full_url="${ENDPOINT%/}${target_path}"
+
+    _post_to_endpoint "$full_url"
+
+    if [[ "$LAST_CURL_RC" -eq 0 && "$LAST_HTTP" =~ ^[234] ]]; then
+      return 0
+    fi
+
+    if [[ $((idx + 1)) -lt $ep_count ]]; then
+      err "note: service node '$current_ep' unreachable or error (curl exit $LAST_CURL_RC, HTTP ${LAST_HTTP:-none}); failing over to next node '${ENDPOINTS[$((idx + 1))]}'."
+      idx=$((idx + 1))
+      continue
+    fi
+    break
+  done
 }
 
-# GET helper for /health (no auth, tiny). Same proxy-first + direct-fallback model
-# as http_post_json (see load_config).
+# GET helper for /health with auto-failover across service nodes.
 http_get() {
-  local url="$1" connect_to="$2" max_time="$3"
-  local out rc
+  local target_path="$1" connect_to="$2" max_time="$3"
+  local explicit_endpoint=""
 
-  _get_once() {  # $1 = connect-timeout; $@ rest = noproxy args
-    local ct="$1"; shift
-    set +e
-    out="$(
-      curl -sS "$url" \
-        --connect-timeout "$ct" \
-        --max-time "$max_time" \
-        --fail-with-body \
-        "$@" \
-        -A "$USER_AGENT" \
-        -w $'\n%{http_code}'
-    )"
-    rc=$?
-    set -e
-  }
+  if [[ "$target_path" =~ ^https?:// ]]; then
+    explicit_endpoint="${target_path%/health}"
+    explicit_endpoint="${explicit_endpoint%/}"
+    local no_proto="${target_path#*://}"
+    target_path="/${no_proto#*/}"
+  fi
 
-  if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
-    _get_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
-  else
-    _get_once "$connect_to"
-    if is_connection_failure "$rc" "${out##*$'\n'}"; then
-      err "note: proxied /health failed (curl exit $rc); retrying direct (--noproxy)."
+  _get_from_endpoint() {
+    local target_url="$1"
+    local out rc
+    _get_once() {  # $1 = connect-timeout; $@ rest = noproxy args
+      local ct="$1"; shift
+      set +e
+      out="$(
+        curl -sS "$target_url" \
+          --connect-timeout "$ct" \
+          --max-time "$max_time" \
+          --fail-with-body \
+          "$@" \
+          -A "$USER_AGENT" \
+          -w $'\n%{http_code}'
+      )"
+      rc=$?
+      set -e
+    }
+
+    if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
       _get_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+    else
+      _get_once "$connect_to"
+      if is_connection_failure "$rc" "${out##*$'\n'}"; then
+        err "note: proxied /health failed (curl exit $rc); retrying direct (--noproxy)."
+        _get_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+      fi
     fi
-  fi
 
-  LAST_HTTP="${out##*$'\n'}"
-  LAST_BODY="${out%$'\n'*}"
-  if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
-  LAST_CURL_RC="$rc"
-}
-
-# Authenticated GET helper for the small read-only admin endpoints
-# (/containers, /jobs/{id}). Same proxy-first + direct-fallback model as
-# http_get, plus the X-API-KEY header (those endpoints require auth, unlike
-# /health). Read-only; at most one alternate route, no curl retry multiplier.
-http_get_auth() {
-  local url="$1" max_time="$2"
-  local out rc
-
-  _get_auth_once() {  # $1 = extra connect-timeout (empty = CURL_RESILIENCE's 5s); $@ rest = noproxy args
-    local ct="$1"; shift
-    local extra=()
-    [[ -n "$ct" ]] && extra+=(--connect-timeout "$ct")
-    set +e
-    out="$(
-      curl -sS "$url" \
-        "${CURL_RESILIENCE[@]}" \
-        --max-time "$max_time" \
-        ${extra[@]+"${extra[@]}"} \
-        "$@" \
-        -A "$USER_AGENT" \
-        -H "X-API-KEY: $API_KEY" \
-        -w $'\n%{http_code}'
-    )"
-    rc=$?
-    set -e
+    LAST_HTTP="${out##*$'\n'}"
+    LAST_BODY="${out%$'\n'*}"
+    if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
+    LAST_CURL_RC="$rc"
   }
 
-  if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
-    _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
-  else
-    _get_auth_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
-    if is_connection_failure "$rc" "${out##*$'\n'}"; then
-      err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
-      _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
-    fi
+  if [[ -n "$explicit_endpoint" ]]; then
+    configure_endpoint_routing "$explicit_endpoint"
+    _get_from_endpoint "${explicit_endpoint}${target_path}"
+    return 0
   fi
 
-  LAST_HTTP="${out##*$'\n'}"
-  LAST_BODY="${out%$'\n'*}"
-  if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
-  LAST_CURL_RC="$rc"
+  local ep_count=${#ENDPOINTS[@]}
+  local idx=0
+  while [[ $idx -lt $ep_count ]]; do
+    local current_ep="${ENDPOINTS[$idx]}"
+    configure_endpoint_routing "$current_ep"
+    local full_url="${ENDPOINT%/}${target_path}"
+
+    _get_from_endpoint "$full_url"
+
+    if [[ "$LAST_CURL_RC" -eq 0 && "$LAST_HTTP" =~ ^[234] ]]; then
+      return 0
+    fi
+
+    if [[ $((idx + 1)) -lt $ep_count ]]; then
+      err "note: service node '$current_ep' unreachable (curl exit $LAST_CURL_RC, HTTP ${LAST_HTTP:-none}); failing over to next node '${ENDPOINTS[$((idx + 1))]}'."
+      idx=$((idx + 1))
+      continue
+    fi
+    break
+  done
 }
+
+
+# Authenticated GET helper with auto-failover across service nodes.
+http_get_auth() {
+  local target_path="$1" max_time="$2"
+
+  if [[ "$target_path" =~ ^https?:// ]]; then
+    local no_proto="${target_path#*://}"
+    target_path="/${no_proto#*/}"
+  fi
+
+  _get_auth_from_endpoint() {
+    local target_url="$1"
+    local out rc
+    _get_auth_once() {  # $1 = extra connect-timeout; $@ rest = noproxy args
+      local ct="$1"; shift
+      local extra=()
+      [[ -n "$ct" ]] && extra+=(--connect-timeout "$ct")
+      set +e
+      out="$(
+        curl -sS "$target_url" \
+          "${CURL_RESILIENCE[@]}" \
+          --max-time "$max_time" \
+          ${extra[@]+"${extra[@]}"} \
+          "$@" \
+          -A "$USER_AGENT" \
+          -H "X-API-KEY: $API_KEY" \
+          -w $'\n%{http_code}'
+      )"
+      rc=$?
+      set -e
+    }
+
+    if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
+      _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+    else
+      _get_auth_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
+      if is_connection_failure "$rc" "${out##*$'\n'}"; then
+        err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
+        _get_auth_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
+      fi
+    fi
+
+    LAST_HTTP="${out##*$'\n'}"
+    LAST_BODY="${out%$'\n'*}"
+    if [[ "$LAST_BODY" == "$LAST_HTTP" ]]; then LAST_BODY=""; fi
+    LAST_CURL_RC="$rc"
+  }
+
+  local ep_count=${#ENDPOINTS[@]}
+  local idx=0
+  while [[ $idx -lt $ep_count ]]; do
+    local current_ep="${ENDPOINTS[$idx]}"
+    configure_endpoint_routing "$current_ep"
+    local full_url="${ENDPOINT%/}${target_path}"
+
+    _get_auth_from_endpoint "$full_url"
+
+    if [[ "$LAST_CURL_RC" -eq 0 && "$LAST_HTTP" =~ ^[234] ]]; then
+      return 0
+    fi
+
+    if [[ $((idx + 1)) -lt $ep_count ]]; then
+      err "note: service node '$current_ep' unreachable (curl exit $LAST_CURL_RC, HTTP ${LAST_HTTP:-none}); failing over to next node '${ENDPOINTS[$((idx + 1))]}'."
+      idx=$((idx + 1))
+      continue
+    fi
+    break
+  done
+}
+
 
 # Detect a cold/degraded search body. Returns 0 (true) if we should re-send.
 # A cold server answers HTTP 200 but the BODY signals not-ready:
@@ -420,31 +515,77 @@ is_cold_body() {
 
 cmd_status() {
   load_config
-  http_get "$ENDPOINT/health" "$HEALTH_CONNECT_TIMEOUT" "$HEALTH_MAX_TIME"
 
-  if [[ "$LAST_CURL_RC" -ne 0 || ! "$LAST_HTTP" =~ ^2 ]]; then
-    classify_and_exit "$LAST_CURL_RC" "$LAST_HTTP" "$LAST_BODY"
+  _probe_node() {
+    local target_ep="$1"
+
+    configure_endpoint_routing "$target_ep"
+    http_get "$ENDPOINT/health" "$HEALTH_CONNECT_TIMEOUT" "$HEALTH_MAX_TIME"
+
+    if [[ "$LAST_CURL_RC" -ne 0 || ! "$LAST_HTTP" =~ ^2 ]]; then
+      printf 'node: %s -> HTTP %s (curl %d)\n' "$ENDPOINT" "${LAST_HTTP:-none}" "$LAST_CURL_RC"
+      return 1
+    fi
+
+    local summary
+    summary="$(jq -r '
+      "health: \(.status // "?")"
+      + " | flavor: \(.build_flavor // "?")"
+      + " | accepting_ingest: \(.accepting_ingest // "?")"
+      + " | runtime_ready: search=\(.runtime_ready.search // "?") query=\(.runtime_ready.query // "?") embed=\(.runtime_ready.embed // "?")"
+      + (if ((.degraded_reasons // []) | length) > 0 then " | degraded_reasons: \(.degraded_reasons | join(","))" else "" end)
+      + (if ((.warnings // []) | length) > 0 then " | warnings: \(.warnings | join(","))" else "" end)
+    ' <<<"$LAST_BODY" 2>/dev/null || echo "unparseable response")"
+
+    if [[ ${#ENDPOINTS[@]} -gt 1 ]]; then
+      printf 'node [%s]: %s\n' "$ENDPOINT" "$summary"
+    else
+      printf '%s\n' "$summary"
+    fi
+  }
+
+  local failed=0
+  local last_rc=0 last_http="" last_body=""
+  for ep in "${ENDPOINTS[@]}"; do
+    _probe_node "$ep" || {
+      failed=$((failed + 1))
+      last_rc="${LAST_CURL_RC:-1}"
+      last_http="${LAST_HTTP:-}"
+      last_body="${LAST_BODY:-}"
+    }
+  done
+
+  if [[ $failed -eq ${#ENDPOINTS[@]} ]]; then
+    classify_and_exit "$last_rc" "$last_http" "$last_body"
   fi
 
-  # One-line health probe summary for any agent. /health is HTTP 200 but the
-  # BODY carries the real readiness — surface status/build_flavor/runtime_ready.
-  jq -r '
-    "health: \(.status // "?")"
-    + " | flavor: \(.build_flavor // "?")"
-    + " | accepting_ingest: \(.accepting_ingest // "?")"
-    + " | runtime_ready: search=\(.runtime_ready.search // "?") query=\(.runtime_ready.query // "?") embed=\(.runtime_ready.embed // "?")"
-    + (if ((.degraded_reasons // []) | length) > 0 then " | degraded_reasons: \(.degraded_reasons | join(","))" else "" end)
-    + (if ((.warnings // []) | length) > 0 then " | warnings: \(.warnings | join(","))" else "" end)
-  ' <<<"$LAST_BODY" 2>/dev/null || {
-    err "health endpoint returned non-JSON or unexpected shape:"
-    printf '%s\n' "$LAST_BODY" >&2
-    exit "$EX_TRANSIENT"
-  }
+}
+
+cmd_node() {
+  load_config
+  local node_name="${TM_NODE_NAME:-$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo "unknown")}"
+  local os_name="$(uname -s 2>/dev/null || echo "unknown")"
+  local arch_name="$(uname -m 2>/dev/null || echo "unknown")"
+  local active_ep="$ENDPOINT"
+  local total_eps=${#ENDPOINTS[@]}
+
+  printf 'Node: %s (%s/%s)\n' "$node_name" "$os_name" "$arch_name"
+  printf 'Container: %s\n' "$CONTAINER"
+  printf 'Active Service Node: %s\n' "$active_ep"
+  if [[ "$total_eps" -gt 1 ]]; then
+    local eps_joined
+    eps_joined="$(IFS=', '; echo "${ENDPOINTS[*]}")"
+    printf 'All Service Nodes (%d): %s\n' "$total_eps" "$eps_joined"
+    printf 'Service Mode: Multi-service-node (with auto-failover)\n'
+  else
+    printf 'Service Mode: Single-service-node\n'
+  fi
+  printf 'Config File: %s\n' "$CONFIG_FILE"
 }
 
 cmd_search() {
-  local json_out=0 rerank=null max_distance=null
-  # Parse flags (only --json) then take the rest as the query.
+  local json_out=0 rerank=null max_distance=null container_override="" union_opt=null
+  # Parse flags then take the rest as the query.
   local args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -452,32 +593,39 @@ cmd_search() {
       --rerank) rerank=true; shift ;;
       --no-rerank) rerank=false; shift ;;
       --max-distance) [[ $# -ge 2 ]] || { err "--max-distance needs a number"; exit "$EX_USAGE"; }; max_distance="$2"; shift 2 ;;
+      -c|--container) [[ $# -ge 2 ]] || { err "--container needs a container name"; exit "$EX_USAGE"; }; container_override="$2"; shift 2 ;;
+      --union) union_opt=true; shift ;;
+      --no-union) union_opt=false; shift ;;
       --)     shift; while [[ $# -gt 0 ]]; do args+=("$1"); shift; done ;;
       *)      args+=("$1"); shift ;;
     esac
   done
   if [[ ${#args[@]} -eq 0 ]]; then
-    err "usage: $0 search [--json] <query>"
+    err "usage: $0 search [--json] [--container <name>] [--union] <query>"
     exit "$EX_USAGE"
   fi
   local query="${args[*]}"
 
   load_config
 
+  local target_container="${container_override:-${TM_CONTAINER:-$CONTAINER}}"
+  local use_union=false
+  if [[ "$union_opt" == "true" || ( -z "$union_opt" && "${TM_UNION:-0}" == "1" ) ]]; then
+    use_union=true
+  fi
+
   # Build the request body with jq -n (NEVER bare braces — zsh-glob-safe).
-  # union:false is the default: a not-yet-initialized sibling (_openai mirror)
-  # would otherwise be pulled into the union and force degraded:true, polluting
-  # per_container_status. Opt into union via the server's union_search_default
-  # or a future flag; for a reliable read path we keep it off.
   local body
   body="$(jq -n \
-    --arg c "$CONTAINER" \
+    --arg c "$target_container" \
     --arg q "$query" \
     --argjson k "$DEFAULT_TOPK" \
+    --argjson u "$use_union" \
     --argjson rerank "$rerank" --argjson distance "$max_distance" \
-    '{container: $c, query: $q, topk: $k, union: false}
+    '{container: $c, query: $q, topk: $k, union: $u}
      + (if $rerank != null then {rerank: $rerank} else {} end)
      + (if $distance != null then {score_threshold: $distance} else {} end)')"
+
 
   # Lazy cold-start absorption: send, inspect body, re-send the SAME query on a
   # cold/degraded body. Steady state (first response already ok) = single call,
@@ -716,21 +864,33 @@ cmd_errors() {
 
 usage() {
   cat >&2 <<EOF
-tm-search.sh — hardened, config-driven retrieval for transcendence-memory.
+tm-search.sh — hardened, config-driven retrieval for transcendence-memory,
+supporting single-service and multi-service nodes with auto-failover.
 
 Usage:
-  $0 status                       Health probe (one-line summary).
-  $0 search [--json] <query>      Semantic search (LanceDB). Lazy cold-start absorb.
+  $0 status                       Health probe across all configured service nodes.
+  $0 node                         Display current client node & service node topology.
+  $0 search [options] <query>     Semantic search (LanceDB). Lazy cold-start absorb.
   $0 query  [--json] <question>   Multimodal RAG query (LightRAG + LLM answer).
   $0 containers [--json] [pat]    List containers (name/objects/index state).
   $0 errors [--json] [--window 24h] [--category other]  Redacted error details.
   $0 jobs [--json] <id>           One job's state (running / exit_code, plain words).
 
-Flags:
+Search Options:
+  --container, -c <name>          Override default container for this search.
+  --union                         Enable cross-container union search.
+  --no-union                      Disable union search (query target container only).
+  --rerank                        Force reranking on.
+  --no-rerank                     Force reranking off.
+  --max-distance <float>          Filter hits by LanceDB L2 distance threshold.
   --json                          Emit raw server JSON instead of distilled text.
 
 Env overrides:
   TM_CONFIG_FILE   config path (default ~/.transcendence-memory/config.toml)
+  TM_ENDPOINTS     failover service nodes list (comma-separated, e.g. "https://ep1,https://ep2")
+  TM_CONTAINER     override default container
+  TM_UNION=1       enable union search by default
+  TM_NODE_NAME     override auto-detected client node name
   TM_NO_PROXY=1    force direct-only (--noproxy); default = proxy-first + auto
                    direct fallback (proxy is usually the reliable path to a
                    Cloudflare-fronted endpoint; direct is the fallback)
@@ -756,6 +916,7 @@ main() {
 
   case "$sub" in
     status)        cmd_status "$@" ;;
+    node|nodes|info) cmd_node "$@" ;;
     search)        cmd_search "$@" ;;
     query)         cmd_query "$@" ;;
     containers)    cmd_containers "$@" ;;
@@ -767,3 +928,4 @@ main() {
 }
 
 main "$@"
+
