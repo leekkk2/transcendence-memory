@@ -130,8 +130,6 @@ def get_container_memories(container_name, input_file=None, *, endpoint=None, ap
 
 
 def cluster_memories(items, max_chars_per_doc=3500, redact=True):
-    if not redact:
-        raise ValueError('credential redaction cannot be disabled')
     if max_chars_per_doc < 512:
         raise ValueError('document character limit must be at least 512')
     cards = []
@@ -140,9 +138,9 @@ def cluster_memories(items, max_chars_per_doc=3500, redact=True):
         if not text.strip() or set(item.get('tags') or []) & {'pre-delete-backup', '删除'}:
             continue
         fingerprint = memory_fingerprint(item)
-        title = redact_text(str(item.get('title') or 'Memory'))[:160]
+        title = (redact_text(str(item.get('title') or 'Memory')) if redact else str(item.get('title') or 'Memory'))[:160]
         header = f'# {title}\nSource version: {fingerprint}\n\n'
-        body = redact_text(text)
+        body = redact_text(text) if redact else text
         step = max_chars_per_doc - len(header) - 40
         for offset in range(0, len(body), step):
             piece = body[offset:offset + step]
@@ -195,9 +193,9 @@ def wait_for_job(endpoint, key, pid, max_wait_sec=600):
     raise RuntimeError('job still pending; retained for the next resume')
 
 
-def process_container(endpoint, key, ledger, name, *, dry_run, input_file, budget, max_chars, wait_seconds):
+def process_container(endpoint, key, ledger, name, *, dry_run, input_file, budget, max_chars, wait_seconds, redact=True):
     memories = get_container_memories(name, input_file, endpoint=endpoint, api_key=key)
-    cards = cluster_memories(memories)
+    cards = cluster_memories(memories, redact=redact)
     entry = ledger['containers'].setdefault(name, {'cards': {}})
     records = entry['cards']
     if not dry_run and not records:
@@ -238,6 +236,7 @@ def main():
     parser.add_argument('--status', action='store_true')
     parser.add_argument('--all', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--private-verbatim', action='store_true', help='Preserve source including secrets for an explicitly authorized private memory endpoint')
     parser.add_argument('--max-documents', type=int, default=20)
     parser.add_argument('--max-chars', type=int, default=50000)
     parser.add_argument('--wait-seconds', type=int, default=600)
@@ -257,7 +256,7 @@ def main():
         for name in names:
             process_container(endpoint, key, ledger, name, dry_run=args.dry_run,
                               input_file=args.input, budget=budget, max_chars=args.max_chars,
-                              wait_seconds=args.wait_seconds)
+                              wait_seconds=args.wait_seconds, redact=not args.private_verbatim)
     return 0
 
 

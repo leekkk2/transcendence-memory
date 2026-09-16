@@ -86,3 +86,10 @@ def test_existing_graph_requires_reconciliation(tmp_path,monkeypatch):
     monkeypatch.setattr(mod,'api_call',lambda *a,**kw:{'node_count':1})
     with pytest.raises(RuntimeError,match='baseline'):
         mod.process_container('https://example.org','k',mod.load_ledger(),'c',dry_run=False,input_file=None,budget=[1],max_chars=50000,wait_seconds=10)
+
+
+def test_explicit_private_verbatim_preserves_content(tmp_path,monkeypatch):
+    mod=load(tmp_path,monkeypatch)
+    text='password=synthetic-private-value'
+    cards=mod.cluster_memories([{'id':'x','text':text}],redact=False)
+    assert cards[0]['source_text']==text
