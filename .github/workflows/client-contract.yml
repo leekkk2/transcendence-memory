@@ -20,11 +20,13 @@ jobs:
           python-version: '3.12'
       - name: Install pinned native client
         run: python -c "import json,subprocess,sys; subprocess.run([sys.executable,'-m','pip','install',json.load(open('cli-source.json'))['requirement']],check=True)"
+      - name: Install test runner
+        run: python -m pip install pytest==8.3.5
       - name: Test complete installation and native wrappers
         shell: python
         run: |
           import subprocess,sys
-          result=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'],capture_output=True,text=True,encoding='utf-8',errors='replace')
+          result=subprocess.run([sys.executable,'-m','pytest','tests','-v'],capture_output=True,text=True,encoding='utf-8',errors='replace')
           print(result.stdout);print(result.stderr)
           if result.returncode:
               text=(result.stdout+result.stderr)[-16000:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
