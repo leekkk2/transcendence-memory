@@ -93,3 +93,10 @@ def test_explicit_private_verbatim_preserves_content(tmp_path,monkeypatch):
     text='password=synthetic-private-value'
     cards=mod.cluster_memories([{'id':'x','text':text}],redact=False)
     assert cards[0]['source_text']==text
+
+
+def test_verbatim_policy_is_read_from_config(tmp_path,monkeypatch):
+    mod=load(tmp_path,monkeypatch)
+    cfg=tmp_path/'config.toml';cfg.write_text('[connection]\nendpoint="https://private.example"\n[auth]\napi_key="test"\n[privacy]\npreserve_sensitive=true\n')
+    monkeypatch.setattr(mod,'CONFIG_FILE',cfg)
+    assert mod.private_verbatim_policy() is True

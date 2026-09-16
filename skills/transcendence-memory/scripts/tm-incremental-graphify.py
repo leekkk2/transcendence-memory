@@ -32,6 +32,12 @@ def load_config():
     return endpoint, key
 
 
+def private_verbatim_policy():
+    import tomllib
+    with CONFIG_FILE.open('rb') as stream:
+        return tomllib.load(stream).get('privacy', {}).get('preserve_sensitive') is True
+
+
 def api_call(endpoint, api_key, path, method='GET', body=None):
     headers = {'X-API-KEY': api_key, 'User-Agent': 'transcendence-memory-graphify/2.0'}
     data = None
@@ -256,7 +262,7 @@ def main():
         for name in names:
             process_container(endpoint, key, ledger, name, dry_run=args.dry_run,
                               input_file=args.input, budget=budget, max_chars=args.max_chars,
-                              wait_seconds=args.wait_seconds, redact=not args.private_verbatim)
+                              wait_seconds=args.wait_seconds, redact=not (args.private_verbatim or private_verbatim_policy()))
     return 0
 
 
