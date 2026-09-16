@@ -171,7 +171,7 @@ load_config() {
 # PRIVATE KEY block, JWT-like triple-segment token.
 # Trade-off: pure sed, no semantic detection — prefer a miss over mangling text.
 redact_secrets() {
-  python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redact.py"
+  python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redact.py" --memory
 }
 
 # Detect local node / host identifier for multi-node provenance

@@ -4,6 +4,8 @@ Regex detection is defense in depth, not a guarantee that text contains no secre
 import json
 import re
 import sys
+import os
+from pathlib import Path
 
 _PATTERNS = [
     (r'-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z]+ )*PRIVATE KEY-----|\Z)', '[REDACTED_PRIVATE_KEY]'),
@@ -32,7 +34,18 @@ def redact(value):
     return value
 
 
+def preserve_private_memory():
+    import tomllib
+    path = Path(os.environ.get('TM_CONFIG', os.environ.get('TM_CONFIG_FILE', str(Path.home() / '.transcendence-memory/config.toml'))))
+    try:
+        config = tomllib.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return config.get('privacy', {}).get('preserve_sensitive') is True
+
+
 if __name__=='__main__':
     text=sys.stdin.read()
-    if '--json' in sys.argv:sys.stdout.write(json.dumps(redact(json.loads(text)),ensure_ascii=False))
+    if '--memory' in sys.argv and preserve_private_memory():sys.stdout.write(text)
+    elif '--json' in sys.argv:sys.stdout.write(json.dumps(redact(json.loads(text)),ensure_ascii=False))
     else:sys.stdout.write(redact_text(text))

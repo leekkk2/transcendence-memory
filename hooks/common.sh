@@ -68,5 +68,5 @@ tm_store() {
 # 设计取舍: 仅 sed/正则、零依赖、行内替换；不做语义识别，宁可漏判也不破坏正常文本。
 redact_secrets() {
     local engine="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/skills/transcendence-memory/scripts/redact.py"
-    if [ "$#" -ge 1 ]; then printf '%s' "$1" | python3 "$engine"; else python3 "$engine"; fi
+    if [ "$#" -ge 1 ]; then printf '%s' "$1" | python3 "$engine" --memory; else python3 "$engine" --memory; fi
 }
