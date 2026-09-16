@@ -58,6 +58,7 @@ sync_one() {
   # Belt-and-suspenders: ensure shell scripts stay executable post-copy.
   if [[ $DRY_RUN -eq 0 && -d "$dst/scripts" ]]; then
     chmod +x "$dst"/scripts/*.sh 2>/dev/null || true
+    chmod +x "$dst"/scripts/*.py 2>/dev/null || true
   fi
 }
 

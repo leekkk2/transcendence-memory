@@ -244,6 +244,7 @@ These commands can be invoked through `/transcendence-memory <command>` or the s
 | `upload <file>` | Upload a file into the knowledge graph | `/tm upload ./design.pdf` |
 | `containers [pattern]` | List containers, optionally filtered by a fuzzy pattern | `/tm containers my-project` |
 | `batch <file.jsonl>` | Bulk import memories | `/tm batch memories.jsonl` |
+| `graphify [options]` | Incrementally cluster and ingest LanceDB memories into LightRAG knowledge graph (`--container/-c`, `--dry-run`, `--status`, `--all`) | `python3 scripts/tm-incremental-graphify.py -c <container>` |
 | `jobs` | List background knowledge-graph build jobs (pending / failed / done) | `/tm jobs` |
 | `auto on` | Enable automatic memory on git commits | `/tm auto on` |
 | `auto off` | Disable automatic memory | `/tm auto off` |
@@ -357,6 +358,7 @@ Auth methods: `X-API-KEY: <api-key>` or `Authorization: Bearer <api-key>`.
 | `scripts/tm-search.sh` | Preferred retrieval wrapper: `search` / `query` / `status` / `containers` / `jobs` over HTTP (config load, zsh-glob-safe JSON, proxy auto-fallback, lazy cold-start warm-up) | Primary path for recall + health probe + read-only admin peeks |
 | `scripts/tm-remember.sh` | Preferred quick-store wrapper: `POST /ingest-memory/objects` with jq-built JSON (kills the hand-escaping 422 class), self-contained secret redaction, `--tags/--title/--no-embed/--json` | Primary path for `/tm remember`-style single-memory writes |
 | `scripts/batch-ingest.py` | Bulk ingest script (built-in `--redact`) | For large memory imports |
+| `scripts/tm-incremental-graphify.py` | Incremental knowledge graph builder (semantic clustering + ledger tracking + alias resolution) | For transforming LanceDB memories into LightRAG knowledge graph |
 | `scripts/job-ledger.py` | Async job ledger: `add` / `sweep` / `list` for background KG build jobs | Used by `/tm jobs`, `/tm upload`, and the SessionStart hook |
 | `scripts/sync-skill.sh` | One-way canonical→installed mirror (anti-drift); run after editing the canonical skill | Maintenance only |
 
