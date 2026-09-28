@@ -20,8 +20,9 @@
 #
 # Write-path discipline: NO curl --retry. A timed-out write may have already
 # reached the server; blind retries can double-store. The only automatic
-# re-send is the direct fallback after a CONNECTION-class failure (curl 6/7 —
-# nothing was ever sent), which is safe. The client-supplied `id` makes an
+# re-send is the direct fallback when the request body was provably never sent:
+# curl 6/7, or 28/35 with zero bytes uploaded (e.g. a proxy whose DNS/TLS to the
+# endpoint fails). Both are safe. The client-supplied `id` makes an
 # accidental replay near-idempotent anyway, but we don't lean on that.
 #
 # Pure config-driven: NO hardcoded endpoint / api_key / container / private host.
@@ -225,11 +226,20 @@ http_post_json() {
           -A "$USER_AGENT" \
           -H "X-API-KEY: $API_KEY" \
           -H "Content-Type: application/json" \
-          -w $'\n%{http_code}' \
+          -w $'\n%{size_upload}:%{http_code}' \
           --data @-
       )"
       rc=$?
       set -e
+      # Split size_upload off the write-out so downstream parsing still sees
+      # the plain "\n<http_code>" tail.
+      local wo="${out##*$'\n'}"
+      if [[ "$wo" =~ ^([0-9]+):([0-9]*)$ ]]; then
+        LAST_UPLOADED="${BASH_REMATCH[1]}"
+        out="${out%$'\n'*}"$'\n'"${BASH_REMATCH[2]}"
+      else
+        LAST_UPLOADED=""
+      fi
     }
 
     if [[ "${FORCE_DIRECT:-0}" == "1" ]]; then
@@ -237,7 +247,8 @@ http_post_json() {
     else
       _post_once "" ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"}
       local http_probe="${out##*$'\n'}"
-      if [[ "$TRANSPORT_MODE" != "proxy" && ( "$rc" -eq 6 || "$rc" -eq 7 ) && ( -z "$http_probe" || "$http_probe" == "000" ) ]]; then
+      if [[ "$TRANSPORT_MODE" != "proxy" && ( -z "$http_probe" || "$http_probe" == "000" ) ]] \
+        && [[ "$rc" -eq 6 || "$rc" -eq 7 || ( ( "$rc" -eq 28 || "$rc" -eq 35 ) && "$LAST_UPLOADED" == "0" ) ]]; then
         err "note: proxied request failed (curl exit $rc); retrying direct (--noproxy)."
         _post_once "$DIRECT_FALLBACK_CONNECT_TIMEOUT" "${DIRECT_ARGS[@]}"
       fi
@@ -281,7 +292,11 @@ classify_and_exit() {
     case "$curl_rc" in
       6|7)  err "endpoint unreachable (DNS/connect failed) on BOTH proxied and direct paths. Check the server is up and that either your *_PROXY or a direct route can reach it."
             exit "$EX_UNAVAILABLE" ;;
-      28)   err "request timed out — the memory MAY or MAY NOT have been stored. Verify with: tm-search.sh search \"<a phrase from the text>\" before re-sending (blind re-send can double-store)."
+      28)   if [[ "${LAST_UPLOADED:-}" == "0" ]]; then
+              err "request timed out before any bytes were sent — the memory was NOT stored; it is safe to re-send."
+              exit "$EX_TRANSIENT"
+            fi
+            err "request timed out — the memory MAY or MAY NOT have been stored. Verify with: tm-search.sh search \"<a phrase from the text>\" before re-sending (blind re-send can double-store)."
             exit "$EX_TRANSIENT" ;;
       *)    err "curl failed (exit $curl_rc) with no HTTP status. Likely network/TLS."
             exit "$EX_UNAVAILABLE" ;;
