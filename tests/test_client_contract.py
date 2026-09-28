@@ -80,21 +80,5 @@ class ClientContract(unittest.TestCase):
             tags2=body2['objects'][0]['tags']
             self.assertNotIn('node:',str(tags2))
 
-    def test_remember_direct_fallback_only_when_nothing_uploaded(self):
-        if os.name=='nt':self.skipTest('Native Windows launchers tested separately')
-        # Proxied attempt fails with curl 35/28; direct (--noproxy) attempt succeeds.
-        fake=('#!/usr/bin/env python3\nimport sys,os\nsys.stdin.read()\nopen(os.environ["CALLS"],"a").write("direct\\n" if "--noproxy" in sys.argv else "proxy\\n")\n'
-              'if "--noproxy" in sys.argv:\n    print(\'{"status":"ok","object_ids":["obj-1"],"index_status":"queued"}\');print("512:200");sys.exit(0)\n'
-              'print();print(os.environ["PROXY_WO"]);sys.exit(int(os.environ["PROXY_RC"]))\n')
-        for rc,uploaded,expect_calls,expect_rc in [('35','0',['proxy','direct'],0),('28','0',['proxy','direct'],0),('28','512',['proxy'],75)]:
-            with self.subTest(rc=rc,uploaded=uploaded),tempfile.TemporaryDirectory() as tmp:
-                p=pathlib.Path(tmp);bin=p/'bin';bin.mkdir();cfg=p/'config.toml';calls=p/'calls'
-                cfg.write_text('[connection]\nendpoint="https://working.invalid"\ncontainer="main"\n[auth]\napi_key="fixture"\n')
-                curl=bin/'curl';curl.write_text(fake);curl.chmod(0o755)
-                env={**os.environ,'PATH':str(bin)+os.pathsep+os.environ['PATH'],'TM_CONFIG_FILE':str(cfg),'TM_ROUTE_SCRIPT':'/dev/null','TM_ENDPOINT':'','TM_ENDPOINTS':'','TM_TRANSPORT_MODE':'auto','CALLS':str(calls),'PROXY_RC':rc,'PROXY_WO':uploaded+':000'}
-                res=subprocess.run(['bash',str(ROOT/'skills/transcendence-memory/scripts/tm-remember.sh'),'回退测试','--no-node'],capture_output=True,text=True,env=env)
-                self.assertEqual(res.returncode,expect_rc,res.stderr)
-                self.assertEqual(calls.read_text().split(),expect_calls)
-
 if __name__=='__main__':unittest.main()
 

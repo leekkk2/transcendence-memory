@@ -5,27 +5,18 @@ All notable changes to this skill plugin are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows semantic versioning.
 
-## v0.9.1 — 2026-09-28
-
-Makes `tm-remember.sh` recover from a broken proxy path instead of silently
-dropping the write.
-
-### Fixed
-
-- **`tm-remember.sh` direct fallback on zero-byte failures**: the proxied write
-  now falls back to the direct (`--noproxy`) path not only on curl 6/7 but also
-  on curl 28/35 **when curl reports `size_upload` = 0** — i.e. the request body
-  provably never left the machine (typical when an env proxy cannot resolve or
-  TLS-tunnel to the endpoint). A timeout after bytes were uploaded is still
-  never retried, so the no-double-store guarantee is unchanged.
-- **Definitive timeout message**: a timeout with zero bytes uploaded now reports
-  that the memory was NOT stored and is safe to re-send, instead of the
-  ambiguous "MAY or MAY NOT have been stored".
+## v0.9.2 — 2026-09-28
 
 ### Changed
 
+- **`tm-remember.sh` transport behavior restored**: the transport change shipped
+  in v0.9.1 is reverted; write-path behavior is identical to v0.9.0 again.
 - **plugin package version bumped**: `.claude-plugin/plugin.json` and
-  `.claude-plugin/marketplace.json` now publish `0.9.1`.
+  `.claude-plugin/marketplace.json` now publish `0.9.2`.
+
+## v0.9.1 — 2026-09-28
+
+Withdrawn; superseded by v0.9.2.
 
 ## v0.8.1 — 2026-06-24
 
