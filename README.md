@@ -167,6 +167,12 @@ hooks/
 - **Server**: [transcendence-memory-server](https://github.com/leekkk2/transcendence-memory-server) — the backend that stores, indexes, and retrieves memories
 - **API Docs**: Auto-generated at `http://your-server:8711/docs` (FastAPI Swagger UI)
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=leekkk2/transcendence-memory,leekkk2/transcendence-memory-server&type=Date)](https://star-history.com/#leekkk2/transcendence-memory&leekkk2/transcendence-memory-server&Date)
+
+If you find Transcendence Memory helpful, please give us a ⭐️ Star! It helps more developers discover the project.
+
 ## License
 
 MIT

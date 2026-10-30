@@ -126,6 +126,12 @@ skills/transcendence-memory/
 - **Server**: [transcendence-memory-server](https://github.com/leekkk2/transcendence-memory-server) - 负责存储、索引和检索记忆的后端
 - **API Docs**: 默认可在 `http://your-server:8711/docs` 查看（FastAPI Swagger UI）
 
+## Star 趋势 (Star History)
+
+[![Star History Chart](https://api.star-history.com/svg?repos=leekkk2/transcendence-memory,leekkk2/transcendence-memory-server&type=Date)](https://star-history.com/#leekkk2/transcendence-memory&leekkk2/transcendence-memory-server&Date)
+
+如果您觉得 Transcendence Memory 对您的 AI 辅助编程工作流有所帮助，欢迎点亮右上角的 ⭐️ Star！这能帮助更多开发者发现本项目。
+
 ## License
 
 MIT
